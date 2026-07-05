@@ -1,0 +1,8 @@
+/target/
+/tmp/
+**/.brainmap/brainmap.sqlite
+**/.brainmap/locks/
+**/.brainmap/web-cache/
+*.brainmap.tar.zst
+*.brainmap.tar.zst.age
+

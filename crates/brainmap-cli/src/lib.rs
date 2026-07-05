@@ -1,0 +1,20 @@
+mod bench;
+mod cli;
+mod context;
+mod eval;
+mod export;
+mod gate;
+mod harness;
+mod index;
+mod install;
+mod learning;
+mod markdown;
+mod mcp;
+mod model;
+mod privacy;
+mod snapshot;
+mod util;
+mod vault;
+mod web;
+
+pub use cli::run;

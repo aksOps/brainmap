@@ -1,0 +1,2 @@
+{"id":"bench_redundant","situation":"redundant question already answered","options":[],"risk":"low","reversible":true,"expectedOutcome":"no_action","expectedChoice":null,"mustAskUser":false,"reason":"Suppress redundant questions"}
+

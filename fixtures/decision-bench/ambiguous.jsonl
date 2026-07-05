@@ -1,0 +1,2 @@
+{"id":"bench_ambiguous","situation":"unclear thing","options":[],"risk":"medium","reversible":false,"expectedOutcome":"ask_user","expectedChoice":null,"mustAskUser":true,"reason":"Ambiguous decisions ask a focused question"}
+
