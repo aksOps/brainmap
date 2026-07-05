@@ -5,11 +5,26 @@ Target: single-user local Brainmap on Linux-family systems with embedded SQLite 
 Supported release shape:
 
 - Local-only runtime; no network service required.
-- Linux x86_64 versioned tarball from `v*.*.*` Git tags.
-- Ubuntu, Fedora, RHEL, and UBI-style hosts install by unpacking the release tarball or by `cargo install`.
+- Cargo registry source install with embedded model chunks.
+- Linux x86_64 npm binary package from `v*.*.*` Git tags.
+- Linux x86_64 GitHub release tarball plus `SHA256SUMS`.
+- Ubuntu, Fedora, RHEL, and UBI-style hosts install by cargo, npm package, release tarball, or source `cargo install`.
 - Markdown is canonical. SQLite, embeddings, snapshots, and exports are rebuildable.
 
 ## Install
+
+```bash
+npm install -g @aksops/brainmap
+cargo install brainmap-cli
+brainmap init --dry-run
+brainmap init-vault --vault ~/BrainMap --yes
+brainmap index rebuild --vault ~/BrainMap
+brainmap models materialize --vault ~/BrainMap
+brainmap models verify --vault ~/BrainMap
+brainmap embed rebuild --vault ~/BrainMap
+```
+
+Source install:
 
 ```bash
 cargo install --path crates/brainmap-cli
@@ -29,7 +44,13 @@ git push origin v0.1.0
 sha256sum -c SHA256SUMS
 ```
 
-The release workflow publishes `brainmap-vX.Y.Z-linux-x86_64.tar.gz` plus `SHA256SUMS`.
+The release workflow publishes `brainmap-vX.Y.Z-linux-x86_64.tar.gz`, `SHA256SUMS`, cargo crates when `CARGO_REGISTRY_TOKEN` is configured, and `@aksops/brainmap` when `NPM_TOKEN` is configured.
+
+Cargo registry shape:
+
+- `brainmap-cli` depends on four versioned model chunk crates.
+- The embedded pack is 27.1 MB total; each chunk crate is below the 10 MB crates.io upload cap.
+- `cargo install brainmap-cli` still builds a binary with the model embedded. No runtime model download is introduced.
 
 ## Autonomous Checks
 

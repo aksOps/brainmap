@@ -221,6 +221,10 @@ version = "0.1.0"
 dependencies = [
  "age",
  "anyhow",
+ "brainmap-model-potion-base-8m-part-1",
+ "brainmap-model-potion-base-8m-part-2",
+ "brainmap-model-potion-base-8m-part-3",
+ "brainmap-model-potion-base-8m-part-4",
  "chrono",
  "clap",
  "hex",
@@ -234,6 +238,22 @@ dependencies = [
  "tempfile",
  "zstd",
 ]
+
+[[package]]
+name = "brainmap-model-potion-base-8m-part-1"
+version = "0.1.0"
+
+[[package]]
+name = "brainmap-model-potion-base-8m-part-2"
+version = "0.1.0"
+
+[[package]]
+name = "brainmap-model-potion-base-8m-part-3"
+version = "0.1.0"
+
+[[package]]
+name = "brainmap-model-potion-base-8m-part-4"
+version = "0.1.0"
 
 [[package]]
 name = "bumpalo"

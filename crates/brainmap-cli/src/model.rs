@@ -7,17 +7,25 @@ use serde::Serialize;
 use serde_json::json;
 use std::cmp::Ordering;
 use std::fs;
-use std::io::Cursor;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 const MODEL_ID: &str = "minishlab/potion-base-8M";
 pub(crate) const DIMENSION: usize = 256;
-const PACK: &[u8] = include_bytes!("../../../assets/models/default.brainmap-model.tar.zst");
+const PACK_SHA256: &str = "ba53d6d59a6de57cb415f2229b7ce1e2ad26f5f9e19eca08bb1446f324d4a39e";
+#[cfg(test)]
+const PACK_LEN: usize = 28_374_272;
+const PACK_CHUNKS: [&[u8]; 4] = [
+    brainmap_model_potion_base_8m_part_1::BYTES,
+    brainmap_model_potion_base_8m_part_2::BYTES,
+    brainmap_model_potion_base_8m_part_3::BYTES,
+    brainmap_model_potion_base_8m_part_4::BYTES,
+];
 
 pub fn models_status(vault: Option<PathBuf>) -> Result<()> {
     let root = vault::resolve_vault(vault);
-    let hash = util::sha256_hex(PACK);
-    let dir = model_dir(&root, &hash);
+    let hash = pack_hash();
+    let dir = model_dir(&root, hash);
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({
@@ -44,9 +52,9 @@ pub fn models_materialize(vault: Option<PathBuf>, force: bool) -> Result<()> {
 }
 
 pub(crate) fn materialize_model(root: &Path, force: bool) -> Result<(PathBuf, bool)> {
-    let hash = util::sha256_hex(PACK);
-    let dir = model_dir(root, &hash);
-    if dir.exists() && !force && verify_materialized_dir(&dir, &hash).is_ok() {
+    let hash = pack_hash();
+    let dir = model_dir(root, hash);
+    if dir.exists() && !force && verify_materialized_dir(&dir, hash).is_ok() {
         return Ok((dir, false));
     }
     let tmp = root.join(".brainmap/models/.tmp-default-model");
@@ -54,7 +62,7 @@ pub(crate) fn materialize_model(root: &Path, force: bool) -> Result<(PathBuf, bo
     fs::create_dir_all(&tmp)?;
     extract_pack(&tmp)?;
     let extracted = tmp.join("potion-base-8M");
-    verify_materialized_dir(&extracted, &hash)?;
+    verify_materialized_dir(&extracted, hash)?;
     if dir.exists() {
         fs::remove_dir_all(&dir)?;
     }
@@ -66,12 +74,12 @@ pub(crate) fn materialize_model(root: &Path, force: bool) -> Result<(PathBuf, bo
 
 pub fn models_verify(vault: Option<PathBuf>) -> Result<()> {
     let root = vault::resolve_vault(vault);
-    let hash = util::sha256_hex(PACK);
-    let dir = model_dir(&root, &hash);
+    let hash = pack_hash();
+    let dir = model_dir(&root, hash);
     if !dir.exists() {
         bail!("model not materialized; run models materialize")
     }
-    verify_materialized_dir(&dir, &hash)?;
+    verify_materialized_dir(&dir, hash)?;
     println!("model verify ok: {MODEL_ID} {hash}");
     Ok(())
 }
@@ -83,8 +91,8 @@ pub fn models_info() -> Result<()> {
             "model": MODEL_ID,
             "type": "Model2Vec static embedding model",
             "dimension": DIMENSION,
-            "packPath": "assets/models/default.brainmap-model.tar.zst",
-            "packKind": "release-assets",
+            "packPath": "crates/brainmap-model-potion-base-8m-part-*/data/part.bin",
+            "packKind": "embedded-crate-chunks",
             "source": "https://huggingface.co/minishlab/potion-base-8M",
             "runtimeDownloadAllowed": false
         }))?
@@ -117,7 +125,7 @@ pub fn embed_status(vault: Option<PathBuf>) -> Result<()> {
             "model": MODEL_ID,
             "dimension": DIMENSION,
             "generateInHotPath": false,
-            "materialized": model_dir(&root, &util::sha256_hex(PACK)).exists(),
+            "materialized": model_dir(&root, pack_hash()).exists(),
             "embeddedNotes": embedded_notes
         }))?
     );
@@ -253,12 +261,12 @@ fn load_materialized_model(root: &Path) -> Result<StaticModel> {
 }
 
 fn materialized_model_dir(root: &Path) -> Result<PathBuf> {
-    let hash = util::sha256_hex(PACK);
-    let dir = model_dir(root, &hash);
+    let hash = pack_hash();
+    let dir = model_dir(root, hash);
     if !dir.exists() {
         bail!("embedded model pack not materialized; run brainmap models materialize")
     }
-    verify_materialized_dir(&dir, &hash)?;
+    verify_materialized_dir(&dir, hash)?;
     Ok(dir)
 }
 
@@ -307,8 +315,12 @@ fn model_dir(root: &std::path::Path, hash: &str) -> PathBuf {
         .join(hash)
 }
 
+fn pack_hash() -> &'static str {
+    PACK_SHA256
+}
+
 fn extract_pack(out: &Path) -> Result<()> {
-    let decoder = zstd::Decoder::new(Cursor::new(PACK))?;
+    let decoder = zstd::Decoder::new(PackReader::new())?;
     let mut archive = tar::Archive::new(decoder);
     for entry in archive.entries()? {
         let mut entry = entry?;
@@ -317,6 +329,43 @@ fn extract_pack(out: &Path) -> Result<()> {
         entry.unpack(out.join(rel))?;
     }
     Ok(())
+}
+
+struct PackReader {
+    chunk: usize,
+    offset: usize,
+}
+
+impl PackReader {
+    fn new() -> Self {
+        Self {
+            chunk: 0,
+            offset: 0,
+        }
+    }
+}
+
+impl Read for PackReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        let mut written = 0;
+        while written < buf.len() && self.chunk < PACK_CHUNKS.len() {
+            let chunk = PACK_CHUNKS[self.chunk];
+            if self.offset == chunk.len() {
+                self.chunk += 1;
+                self.offset = 0;
+                continue;
+            }
+            let available = &chunk[self.offset..];
+            let to_copy = available.len().min(buf.len() - written);
+            buf[written..written + to_copy].copy_from_slice(&available[..to_copy]);
+            written += to_copy;
+            self.offset += to_copy;
+        }
+        Ok(written)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -364,6 +413,19 @@ fn verify_materialized_dir(dir: &Path, pack_hash: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
+
+    #[test]
+    fn embedded_model_chunks_match_expected_hash() {
+        let mut hasher = Sha256::new();
+        let mut len = 0;
+        for chunk in PACK_CHUNKS {
+            len += chunk.len();
+            hasher.update(chunk);
+        }
+        assert_eq!(len, PACK_LEN);
+        assert_eq!(hex::encode(hasher.finalize()), PACK_SHA256);
+    }
 
     #[test]
     fn materializes_real_pack_and_verifies_checksums() {
@@ -372,9 +434,9 @@ mod tests {
         vault::init_vault(Some(root.clone()), false, true).unwrap();
         models_materialize(Some(root.clone()), false).unwrap();
         models_verify(Some(root.clone())).unwrap();
-        let hash = util::sha256_hex(PACK);
-        assert!(model_dir(&root, &hash).join("model.safetensors").exists());
-        assert!(model_dir(&root, &hash).join("tokenizer.json").exists());
+        let hash = pack_hash();
+        assert!(model_dir(&root, hash).join("model.safetensors").exists());
+        assert!(model_dir(&root, hash).join("tokenizer.json").exists());
     }
 
     #[test]

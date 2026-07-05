@@ -19,10 +19,17 @@ Markdown is canonical. SQLite is a rebuildable compiled index. The hot path neve
 ## Install
 
 ```bash
+npm install -g @aksops/brainmap
+cargo install brainmap-cli
+```
+
+Source install:
+
+```bash
 cargo install --path crates/brainmap-cli
 ```
 
-Versioned Linux releases are created from `v*.*.*` tags and include a tarball plus `SHA256SUMS`.
+Versioned Linux releases are created from `v*.*.*` tags and publish cargo crates, a GitHub tarball, and the npm binary package.
 
 ## Slow Path
 

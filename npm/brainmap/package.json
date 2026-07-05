@@ -1,0 +1,31 @@
+{
+  "name": "@aksops/brainmap",
+  "version": "0.1.0",
+  "description": "Local deterministic personal decision engine",
+  "license": "MIT",
+  "homepage": "https://github.com/aksOps/brainmap",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aksOps/brainmap.git",
+    "directory": "npm/brainmap"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "bin": {
+    "brainmap": "bin/brainmap",
+    "brainmapd": "bin/brainmapd"
+  },
+  "files": [
+    "bin/brainmap",
+    "bin/brainmapd",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "test -x bin/brainmap && test -x bin/brainmapd && ./bin/brainmap --help >/dev/null",
+    "pack:dry-run": "npm pack --dry-run"
+  }
+}
