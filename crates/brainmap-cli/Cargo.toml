@@ -3,6 +3,11 @@ name = "brainmap-cli"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+description = "Local deterministic personal decision engine"
+homepage = "https://github.com/aksOps/brainmap"
+repository = "https://github.com/aksOps/brainmap"
+keywords = ["brainmap", "local-first", "sqlite", "cli"]
+categories = ["command-line-utilities"]
 default-run = "brainmap"
 
 [[bin]]
@@ -16,6 +21,10 @@ path = "src/bin/brainmapd.rs"
 [dependencies]
 age = "0.11.3"
 anyhow = "1"
+brainmap-model-potion-base-8m-part-1 = { version = "0.1.0", path = "../brainmap-model-potion-base-8m-part-1" }
+brainmap-model-potion-base-8m-part-2 = { version = "0.1.0", path = "../brainmap-model-potion-base-8m-part-2" }
+brainmap-model-potion-base-8m-part-3 = { version = "0.1.0", path = "../brainmap-model-potion-base-8m-part-3" }
+brainmap-model-potion-base-8m-part-4 = { version = "0.1.0", path = "../brainmap-model-potion-base-8m-part-4" }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 clap = { version = "4", features = ["derive"] }
 hex = "0.4"

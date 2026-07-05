@@ -1,4 +1,9 @@
 [workspace]
-members = ["crates/brainmap-cli"]
+members = [
+    "crates/brainmap-cli",
+    "crates/brainmap-model-potion-base-8m-part-1",
+    "crates/brainmap-model-potion-base-8m-part-2",
+    "crates/brainmap-model-potion-base-8m-part-3",
+    "crates/brainmap-model-potion-base-8m-part-4",
+]
 resolver = "3"
-

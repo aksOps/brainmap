@@ -5,4 +5,5 @@
 **/.brainmap/web-cache/
 *.brainmap.tar.zst
 *.brainmap.tar.zst.age
-
+/npm/brainmap/bin/brainmap
+/npm/brainmap/bin/brainmapd
