@@ -312,18 +312,23 @@ pub fn capture(args: CaptureArgs) -> Result<()> {
     if args.stdin {
         io::stdin().read_to_string(&mut text)?;
     }
-    let redacted = privacy::redact(&text);
+    capture_text(&root, &text, &args.source)?;
+    println!("captured");
+    Ok(())
+}
+
+pub(crate) fn capture_text(root: &Path, text: &str, source: &str) -> Result<()> {
+    let redacted = privacy::redact(text);
     util::append_jsonl(
         &root.join(".brainmap/capture-queue.jsonl"),
         &json!({
             "id": util::id("cap", &redacted),
             "createdAt": util::now_iso(),
-            "source": args.source,
+            "source": source,
             "text": compact(&redacted),
-            "sensitivity": privacy::sensitivity(&text)
+            "sensitivity": privacy::sensitivity(text)
         }),
     )?;
-    println!("captured");
     Ok(())
 }
 

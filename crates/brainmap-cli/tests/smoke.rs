@@ -110,6 +110,17 @@ fn production_smoke_cli_flow() {
     assert!(eval.contains("\"falseProceed\": 0"));
 }
 
+#[test]
+fn bench_scale_cli_reports_envelope_fields() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path().join("BrainMap");
+    let output = ok(&["bench", "--vault", path(&root), "--scale", "12"]);
+    assert!(output.contains("\"scaleRequested\": 12"));
+    assert!(output.contains("\"notes\": 12"));
+    assert!(output.contains("\"indexRebuildMs\""));
+    assert!(output.contains("\"contextFastMs\""));
+}
+
 fn ok(args: &[&str]) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_brainmap"))
         .args(args)

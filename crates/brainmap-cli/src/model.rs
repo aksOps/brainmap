@@ -11,7 +11,7 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 const MODEL_ID: &str = "minishlab/potion-base-8M";
-const DIMENSION: usize = 256;
+pub(crate) const DIMENSION: usize = 256;
 const PACK: &[u8] = include_bytes!("../../../assets/models/default.brainmap-model.tar.zst");
 
 pub fn models_status(vault: Option<PathBuf>) -> Result<()> {
@@ -34,11 +34,20 @@ pub fn models_status(vault: Option<PathBuf>) -> Result<()> {
 
 pub fn models_materialize(vault: Option<PathBuf>, force: bool) -> Result<()> {
     let root = vault::resolve_vault(vault);
-    let hash = util::sha256_hex(PACK);
-    let dir = model_dir(&root, &hash);
-    if dir.exists() && !force && verify_materialized_dir(&dir, &hash).is_ok() {
+    let (dir, changed) = materialize_model(&root, force)?;
+    if changed {
+        println!("materialized model {}", dir.display());
+    } else {
         println!("model already materialized: {}", dir.display());
-        return Ok(());
+    }
+    Ok(())
+}
+
+pub(crate) fn materialize_model(root: &Path, force: bool) -> Result<(PathBuf, bool)> {
+    let hash = util::sha256_hex(PACK);
+    let dir = model_dir(root, &hash);
+    if dir.exists() && !force && verify_materialized_dir(&dir, &hash).is_ok() {
+        return Ok((dir, false));
     }
     let tmp = root.join(".brainmap/models/.tmp-default-model");
     let _ = fs::remove_dir_all(&tmp);
@@ -52,8 +61,7 @@ pub fn models_materialize(vault: Option<PathBuf>, force: bool) -> Result<()> {
     fs::create_dir_all(dir.parent().context("model dir has no parent")?)?;
     fs::rename(&extracted, &dir)?;
     let _ = fs::remove_dir_all(&tmp);
-    println!("materialized model {}", dir.display());
-    Ok(())
+    Ok((dir, true))
 }
 
 pub fn models_verify(vault: Option<PathBuf>) -> Result<()> {
@@ -161,7 +169,7 @@ pub fn search_vector(root: &Path, query: &str, limit: usize) -> Result<Vec<Vecto
     Ok(results)
 }
 
-fn embed_notes(root: &Path, missing_only: bool) -> Result<usize> {
+pub(crate) fn embed_notes(root: &Path, missing_only: bool) -> Result<usize> {
     let model = load_materialized_model(root)?;
     if !index::db_path(root).exists() {
         index::rebuild(root)?;
@@ -225,7 +233,7 @@ fn note_rows_for_embedding(
         .map_err(Into::into)
 }
 
-fn embedding_count(root: &Path) -> Result<usize> {
+pub(crate) fn embedding_count(root: &Path) -> Result<usize> {
     if !index::db_path(root).exists() {
         return Ok(0);
     }
