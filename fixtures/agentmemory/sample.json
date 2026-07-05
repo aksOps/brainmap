@@ -1,0 +1,9 @@
+{
+  "memories": [
+    {
+      "text": "User rejected external vector DB and chose Markdown plus SQLite because local-first portability matters.",
+      "kind": "decision"
+    }
+  ]
+}
+

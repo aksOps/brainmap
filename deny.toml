@@ -1,0 +1,31 @@
+[advisories]
+yanked = "deny"
+ignore = [
+  { id = "RUSTSEC-2024-0436", reason = "Transitive macro helper via model2vec-rs -> tokenizers; unmaintained warning only. Keep tokenizers/model2vec path under review." },
+  { id = "RUSTSEC-2025-0119", reason = "Transitive progressbar formatting helper via model2vec-rs -> tokenizers -> indicatif; unmaintained warning only. Not used on hot path." },
+  { id = "RUSTSEC-2026-0173", reason = "Transitive build/proc-macro dependency via age/i18n-embed-fl; unmaintained warning only, no vulnerability. Keep age path under review." },
+]
+
+[licenses]
+confidence-threshold = 0.8
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "MPL-2.0",
+  "ISC",
+  "Unicode-3.0",
+  "Unicode-DFS-2016",
+  "CC0-1.0",
+  "Zlib",
+]
+exceptions = []
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
