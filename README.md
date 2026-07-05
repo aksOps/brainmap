@@ -73,9 +73,9 @@ cargo run -- brainmap export --mode portable --encrypt --recipient age1... --vau
 cargo run -- brainmap verify-export ./tmp/brainmap.brainmap.tar.zst.age --identity ./identity.txt
 ```
 
-## Offline Embeddings
+## Offline Runtime Embeddings
 
-The default model is embedded `minishlab/potion-base-8M`. `models materialize`, `models verify`, `embed rebuild`, and vector search run locally with no runtime downloads or external embedding providers; see `docs/model-packaging.md`.
+The default model is downloaded at build time, checksum-verified, and embedded into the `brainmap` binary. `models materialize`, `models verify`, `embed rebuild`, and vector search run locally with no runtime downloads or external embedding providers; see `docs/model-packaging.md`.
 
 ## Verification
 

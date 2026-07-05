@@ -7,3 +7,4 @@
 *.brainmap.tar.zst.age
 /npm/brainmap/bin/brainmap
 /npm/brainmap/bin/brainmapd
+/assets/models/*.tar.zst

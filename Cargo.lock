@@ -221,10 +221,6 @@ version = "0.1.0"
 dependencies = [
  "age",
  "anyhow",
- "brainmap-model-potion-base-8m-part-1",
- "brainmap-model-potion-base-8m-part-2",
- "brainmap-model-potion-base-8m-part-3",
- "brainmap-model-potion-base-8m-part-4",
  "chrono",
  "clap",
  "hex",
@@ -238,22 +234,6 @@ dependencies = [
  "tempfile",
  "zstd",
 ]
-
-[[package]]
-name = "brainmap-model-potion-base-8m-part-1"
-version = "0.1.0"
-
-[[package]]
-name = "brainmap-model-potion-base-8m-part-2"
-version = "0.1.0"
-
-[[package]]
-name = "brainmap-model-potion-base-8m-part-3"
-version = "0.1.0"
-
-[[package]]
-name = "brainmap-model-potion-base-8m-part-4"
-version = "0.1.0"
 
 [[package]]
 name = "bumpalo"
@@ -272,9 +252,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.65"
+version = "1.2.66"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e228eec9be7c17ccb640b59b36a5cd805ea2a564a4c5e162c2f659fea30d3b96"
+checksum = "f5d6cac793997bd970000024b2934968efe83b382de4fdcf4fcb46b6ee4ad996"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
