@@ -23,28 +23,13 @@ jobs:
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          cargo_crates=(
-            crates/brainmap-model-potion-base-8m-part-1
-            crates/brainmap-model-potion-base-8m-part-2
-            crates/brainmap-model-potion-base-8m-part-3
-            crates/brainmap-model-potion-base-8m-part-4
-            crates/brainmap-cli
-          )
-          for crate in "${cargo_crates[@]}"; do
-            cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' "${crate}/Cargo.toml" | head -1)"
-            test "${cargo_version}" = "${version}"
-          done
+          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' crates/brainmap-cli/Cargo.toml | head -1)"
           npm_version="$(node -p "require('./npm/brainmap/package.json').version")"
+          test "${cargo_version}" = "${version}"
           test "${npm_version}" = "${version}"
       - run: cargo test --locked
       - name: Package cargo crates
-        run: |
-          set -euo pipefail
-          cargo package --locked -p brainmap-model-potion-base-8m-part-1
-          cargo package --locked -p brainmap-model-potion-base-8m-part-2
-          cargo package --locked -p brainmap-model-potion-base-8m-part-3
-          cargo package --locked -p brainmap-model-potion-base-8m-part-4
-          cargo package --list -p brainmap-cli
+        run: cargo package --locked -p brainmap-cli
       - name: Publish cargo crates
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -54,14 +39,6 @@ jobs:
             echo "CARGO_REGISTRY_TOKEN not set; skipping cargo publish"
             exit 0
           fi
-          cargo publish --locked -p brainmap-model-potion-base-8m-part-1
-          cargo publish --locked -p brainmap-model-potion-base-8m-part-2
-          cargo publish --locked -p brainmap-model-potion-base-8m-part-3
-          cargo publish --locked -p brainmap-model-potion-base-8m-part-4
-          for attempt in 1 2 3 4 5; do
-            cargo publish --locked -p brainmap-cli && exit 0
-            sleep 30
-          done
           cargo publish --locked -p brainmap-cli
       - run: cargo build --release --locked --bin brainmap --bin brainmapd
       - name: Package

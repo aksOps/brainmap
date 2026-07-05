@@ -21,10 +21,6 @@ path = "src/bin/brainmapd.rs"
 [dependencies]
 age = "0.11.3"
 anyhow = "1"
-brainmap-model-potion-base-8m-part-1 = { version = "0.1.0", path = "../brainmap-model-potion-base-8m-part-1" }
-brainmap-model-potion-base-8m-part-2 = { version = "0.1.0", path = "../brainmap-model-potion-base-8m-part-2" }
-brainmap-model-potion-base-8m-part-3 = { version = "0.1.0", path = "../brainmap-model-potion-base-8m-part-3" }
-brainmap-model-potion-base-8m-part-4 = { version = "0.1.0", path = "../brainmap-model-potion-base-8m-part-4" }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 clap = { version = "4", features = ["derive"] }
 hex = "0.4"
@@ -36,4 +32,9 @@ serde_json = "1"
 sha2 = "0.10"
 tar = "0.4"
 tempfile = "3"
+zstd = "0.13"
+
+[build-dependencies]
+sha2 = "0.10"
+tar = "0.4"
 zstd = "0.13"

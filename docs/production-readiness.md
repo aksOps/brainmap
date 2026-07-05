@@ -5,7 +5,7 @@ Target: single-user local Brainmap on Linux-family systems with embedded SQLite 
 Supported release shape:
 
 - Local-only runtime; no network service required.
-- Cargo registry source install with embedded model chunks.
+- Cargo registry source install downloads the model at build time and embeds it into the binary.
 - Linux x86_64 npm binary package from `v*.*.*` Git tags.
 - Linux x86_64 GitHub release tarball plus `SHA256SUMS`.
 - Ubuntu, Fedora, RHEL, and UBI-style hosts install by cargo, npm package, release tarball, or source `cargo install`.
@@ -48,9 +48,9 @@ The release workflow publishes `brainmap-vX.Y.Z-linux-x86_64.tar.gz`, `SHA256SUM
 
 Cargo registry shape:
 
-- `brainmap-cli` depends on four versioned model chunk crates.
-- The embedded pack is 27.1 MB total; each chunk crate is below the 10 MB crates.io upload cap.
-- `cargo install brainmap-cli` still builds a binary with the model embedded. No runtime model download is introduced.
+- `brainmap-cli` publishes without model bytes in the crate package.
+- `build.rs` downloads and checksum-verifies `minishlab/potion-base-8M`, then embeds the generated pack.
+- `cargo install brainmap-cli` needs network and `curl` at build/install time. No runtime model download is introduced.
 
 ## Autonomous Checks
 

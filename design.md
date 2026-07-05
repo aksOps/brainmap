@@ -1336,9 +1336,7 @@ The embedding model must be available in the binary or packaged as a compile-tim
 
 Implementation:
 
-- Embed compressed model pack using Rust compile-time embedding, such as `include_bytes!` or safer equivalent.
-- Model pack path:
-  assets/models/default.brainmap-model.tar.zst
+- Download model files at build time, verify checksums, create compressed pack in Cargo `OUT_DIR`, then embed with `include_bytes!`.
 - Pack contains:
   - model files required by Model2Vec
   - tokenizer/config files if needed
