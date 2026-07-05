@@ -16,6 +16,12 @@ cargo run -- brainmap context --fast --json --vault ./tmp/BrainMap
 
 Markdown is canonical. SQLite is a rebuildable compiled index. The hot path never calls an LLM, AgentMemory, network, or embedding generator.
 
+## Install
+
+```bash
+cargo install --path crates/brainmap-cli
+```
+
 ## Slow Path
 
 Use `build-decision-engine --mode interview` from zero. AgentMemory is optional; failures fall back to interview mode.
@@ -72,3 +78,5 @@ cargo audit
 cargo deny check
 cargo cyclonedx
 ```
+
+Production checklist: `docs/production-readiness.md`.
