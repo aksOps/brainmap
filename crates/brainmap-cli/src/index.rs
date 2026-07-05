@@ -30,8 +30,6 @@ pub fn rebuild(root: &Path) -> Result<()> {
     let tmp = root.join(".brainmap/brainmap.sqlite.tmp");
     let final_path = db_path(root);
     let _ = fs::remove_file(&tmp);
-    let mut conn = Connection::open(&tmp)?;
-    create_schema(&mut conn)?;
     let notes = vault::load_notes(root)?;
     let mut link_index = HashMap::new();
     for note in &notes {
@@ -42,53 +40,57 @@ pub fn rebuild(root: &Path) -> Result<()> {
             link_index.insert(path_without_ext.to_string(), note.id.clone());
         }
     }
-    let tx = conn.transaction()?;
-    for note in &notes {
-        tx.execute(
-            "insert into notes (id,path,title,note_type,status,confidence,risk_tier,sensitivity,body) values (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-            params![
-                note.id,
-                note.path.to_string_lossy(),
-                note.title,
-                note.note_type,
-                note.status,
-                note.confidence,
-                note.risk_tier,
-                note.sensitivity,
-                note.body
-            ],
-        )?;
-        tx.execute(
-            "insert into fts_notes (path,title,body) values (?1,?2,?3)",
-            params![note.path.to_string_lossy(), note.title, note.body],
-        )?;
-        tx.execute(
-            "insert into graph_nodes (id,path,kind,title) values (?1,?2,?3,?4)",
-            params![
-                note.id,
-                note.path.to_string_lossy(),
-                note.note_type,
-                note.title
-            ],
-        )?;
-    }
-    for note in &notes {
-        for link in &note.links {
-            let target = link_index
-                .get(link)
-                .cloned()
-                .unwrap_or_else(|| link.clone());
+    {
+        let mut conn = Connection::open(&tmp)?;
+        create_schema(&mut conn)?;
+        let tx = conn.transaction()?;
+        for note in &notes {
             tx.execute(
-                "insert into graph_edges (from_id,to_id,kind) values (?1,?2,'related')",
-                params![note.id, target],
+                "insert into notes (id,path,title,note_type,status,confidence,risk_tier,sensitivity,body) values (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                params![
+                    note.id,
+                    note.path.to_string_lossy(),
+                    note.title,
+                    note.note_type,
+                    note.status,
+                    note.confidence,
+                    note.risk_tier,
+                    note.sensitivity,
+                    note.body
+                ],
+            )?;
+            tx.execute(
+                "insert into fts_notes (path,title,body) values (?1,?2,?3)",
+                params![note.path.to_string_lossy(), note.title, note.body],
+            )?;
+            tx.execute(
+                "insert into graph_nodes (id,path,kind,title) values (?1,?2,?3,?4)",
+                params![
+                    note.id,
+                    note.path.to_string_lossy(),
+                    note.note_type,
+                    note.title
+                ],
             )?;
         }
+        for note in &notes {
+            for link in &note.links {
+                let target = link_index
+                    .get(link)
+                    .cloned()
+                    .unwrap_or_else(|| link.clone());
+                tx.execute(
+                    "insert into graph_edges (from_id,to_id,kind) values (?1,?2,'related')",
+                    params![note.id, target],
+                )?;
+            }
+        }
+        tx.execute(
+            "insert into index_manifest (key,value) values ('valid','true'),('createdAt',?1),('schemaVersion','decision-engine-v1')",
+            params![util::now_iso()],
+        )?;
+        tx.commit()?;
     }
-    tx.execute(
-        "insert into index_manifest (key,value) values ('valid','true'),('createdAt',?1),('schemaVersion','decision-engine-v1')",
-        params![util::now_iso()],
-    )?;
-    tx.commit()?;
     if final_path.exists() {
         fs::remove_file(&final_path)?;
     }
