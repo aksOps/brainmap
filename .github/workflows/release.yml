@@ -1,0 +1,38 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --locked
+      - run: cargo build --release --locked --bin brainmap --bin brainmapd
+      - name: Package
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME}"
+          package="brainmap-${version}-linux-x86_64"
+          mkdir -p "dist/${package}"
+          cp target/release/brainmap "dist/${package}/"
+          cp target/release/brainmapd "dist/${package}/"
+          cp README.md LICENSE-MIT LICENSE-APACHE "dist/${package}/"
+          tar -C dist -czf "dist/${package}.tar.gz" "${package}"
+          cd dist
+          sha256sum "${package}.tar.gz" > SHA256SUMS
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/*.tar.gz dist/SHA256SUMS \
+            --verify-tag \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "Linux x86_64 local Brainmap release."

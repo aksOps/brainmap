@@ -540,6 +540,12 @@ enum RollbackCommand {
 pub struct BenchArgs {
     #[arg(long)]
     pub vault: Option<PathBuf>,
+    #[arg(long)]
+    pub scale: Option<usize>,
+    #[arg(long)]
+    pub embeddings: bool,
+    #[arg(long, default_value = "local first decisions")]
+    pub query: String,
 }
 
 #[derive(Args)]

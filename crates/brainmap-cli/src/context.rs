@@ -5,7 +5,7 @@ use rusqlite::params;
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
-struct ContextPack {
+pub(crate) struct ContextPack {
     mode: &'static str,
     source: &'static str,
     hot_path: HotPath,
@@ -52,7 +52,7 @@ pub fn cmd_context(args: ContextArgs) -> Result<()> {
     Ok(())
 }
 
-fn load_fast_context(root: &std::path::Path, limit: usize) -> Result<ContextPack> {
+pub(crate) fn load_fast_context(root: &std::path::Path, limit: usize) -> Result<ContextPack> {
     let conn = index::connection(root)?;
     Ok(ContextPack {
         mode: "decision-engine",

@@ -22,6 +22,8 @@ Markdown is canonical. SQLite is a rebuildable compiled index. The hot path neve
 cargo install --path crates/brainmap-cli
 ```
 
+Versioned Linux releases are created from `v*.*.*` tags and include a tarball plus `SHA256SUMS`.
+
 ## Slow Path
 
 Use `build-decision-engine --mode interview` from zero. AgentMemory is optional; failures fall back to interview mode.
@@ -77,6 +79,12 @@ cargo test
 cargo audit
 cargo deny check
 cargo cyclonedx
+```
+
+Scale check:
+
+```bash
+brainmap bench --vault /tmp/brainmap-scale-5000 --scale 5000 --embeddings
 ```
 
 Production checklist: `docs/production-readiness.md`.
