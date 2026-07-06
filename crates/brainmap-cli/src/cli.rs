@@ -47,6 +47,8 @@ enum Command {
     Capture(CaptureArgs),
     Extract(ExtractArgs),
     Apply(ApplyArgs),
+    #[command(name = "prune-imports")]
+    PruneImports(PruneImportsArgs),
     #[command(name = "review-decisions")]
     ReviewDecisions(ReviewArgs),
     Dream(DreamArgs),
@@ -293,6 +295,16 @@ pub struct ApplyArgs {
     pub yes: bool,
     #[arg(long)]
     pub dry_run: bool,
+    #[arg(long)]
+    pub vault: Option<PathBuf>,
+}
+
+#[derive(Args, Clone)]
+pub struct PruneImportsArgs {
+    #[arg(long)]
+    pub dry_run: bool,
+    #[arg(long)]
+    pub yes: bool,
     #[arg(long)]
     pub vault: Option<PathBuf>,
 }
@@ -596,6 +608,7 @@ pub fn run() -> Result<()> {
         Command::Capture(args) => learning::capture(args),
         Command::Extract(args) => learning::extract(args),
         Command::Apply(args) => learning::apply(args),
+        Command::PruneImports(args) => learning::prune_imports(args),
         Command::ReviewDecisions(args) => learning::review(args.vault, &args.cadence),
         Command::Dream(args) => learning::dream(args.vault, &args.mode),
         Command::Index(args) => match args.command {
