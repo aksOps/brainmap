@@ -12,6 +12,14 @@ fn brainmap_help_binary_builds() {
 }
 
 #[test]
+fn skill_command_prints_dynamic_build_decision_engine_skill() {
+    let output = ok(&["skill", "build-decision-engine", "--host", "codex"]);
+    assert!(output.contains("Use Brainmap to learn decisions, not knowledge."));
+    assert!(output.contains("Local hooks are installed by default."));
+    assert!(output.contains("Host: codex."));
+}
+
+#[test]
 fn production_smoke_cli_flow() {
     let tmp = tempfile::tempdir().expect("temp dir");
     let root = tmp.path().join("BrainMap");

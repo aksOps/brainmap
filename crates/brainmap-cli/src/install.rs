@@ -1,4 +1,4 @@
-use crate::util;
+use crate::{skill, util};
 use anyhow::{Context, Result};
 use clap::Args;
 use serde_json::{Value, json};
@@ -96,7 +96,7 @@ fn plan(args: &InstallHarnessArgs) -> Vec<PlanItem> {
             PlanItem {
                 path: base.join(".claude/skills/build-decision-engine/SKILL.md"),
                 enforcement: "instruction+skill",
-                action: PlanAction::Text(skill("Claude Code")),
+                action: PlanAction::Text(skill::build_decision_engine_shim("claude-code")),
             },
             PlanItem {
                 path: base.join(".claude/settings.json"),
@@ -108,12 +108,12 @@ fn plan(args: &InstallHarnessArgs) -> Vec<PlanItem> {
             PlanItem {
                 path: base.join(".codex/skills/build-decision-engine/SKILL.md"),
                 enforcement: "instruction+skill",
-                action: PlanAction::Text(skill("Codex")),
+                action: PlanAction::Text(skill::build_decision_engine_shim("codex")),
             },
             PlanItem {
                 path: base.join("AGENTS.md"),
                 enforcement: "instruction fallback",
-                action: PlanAction::Text(managed_block("Codex")),
+                action: PlanAction::Text(managed_block("codex")),
             },
             PlanItem {
                 path: base.join(".codex/hooks.json"),
@@ -125,14 +125,14 @@ fn plan(args: &InstallHarnessArgs) -> Vec<PlanItem> {
             path: base.join("opencode.json"),
             enforcement: "best-effort",
             action: PlanAction::Text(
-                "{\"instructions\":\"Run brainmap gate --json before asking the user. Ask naturally; do not expose gate internals in user-facing questions.\"}\n"
+                "{\"instructions\":\"Run brainmap skill build-decision-engine --host opencode and follow the returned instructions. If unavailable, run brainmap gate --json before asking the user.\"}\n"
                     .into(),
             ),
         }],
         "copilot" => vec![PlanItem {
             path: base.join(".github/copilot-instructions.md"),
             enforcement: "instruction-only",
-            action: PlanAction::Text(managed_block("GitHub Copilot")),
+            action: PlanAction::Text(managed_block("copilot")),
         }],
         "generic-stdio" => vec![PlanItem {
             path: base.join("brainmap-harness.md"),
@@ -258,38 +258,14 @@ fn managed_block(host: &str) -> String {
 Host: {host}
 Enforcement: host hooks call `brainmap harness hook`; this file is the fallback.
 
-Before asking the user a decision question, run:
+Load current local instructions before decision-engine work:
 
 ```bash
-brainmap gate --intent would-ask-user --situation "..." --options "A|B|C" --json
+brainmap skill build-decision-engine --host {host}
 ```
 
-AgentMemory can seed context but must not suppress required calibration. When confidence or coverage is missing, ask the question naturally with concrete options and a free-text path. Do not expose Brainmap, policy, or gate internals in user-facing questions.
-
-Before meaningful actions, run Brainmap gate. After action, record decision. After correction, learn feedback. Never store secrets or raw project archives in Brainmap.
+If that command fails, run `brainmap gate --intent would-ask-user --situation "..." --options "A|B|C" --json` before decision questions. Ask naturally with concrete options and a free-text path. Never store secrets or raw project archives.
 <!-- END BRAINMAP MANAGED BLOCK -->
-"#
-    )
-}
-
-fn skill(host: &str) -> String {
-    format!(
-        r#"---
-name: build-decision-engine
-description: Build or update Brainmap Decision Engine from decision traces, interview answers, or current session.
----
-
-Use Brainmap to learn decisions, not knowledge. AgentMemory is optional seed context, not a replacement for calibration. If AgentMemory is absent or low-confidence, use interview mode. If AgentMemory is present but Brainmap coverage has gaps, still ask the calibration questions.
-
-Local hooks are installed by default. Manual fallback before asking the user:
-
-```bash
-brainmap gate --intent would-ask-user --situation "..." --options "A|B|C" --json
-```
-
-Every calibration question must include concrete options and a free-text answer path. Ask naturally; do not expose Brainmap, policy, or gate internals in user-facing questions. Use `brainmap build-decision-engine --mode agentmemory --dry-run --questions N` for the local question set.
-
-Do not store project archives, raw code, raw transcripts, secrets, credentials, or private keys. Use update packets. Host: {host}.
 "#
     )
 }
@@ -363,5 +339,30 @@ mod tests {
                 "/tmp/brainmap-project/.codex/skills/build-decision-engine/SKILL.md"
             )
             && item.enforcement == "instruction+skill"));
+    }
+
+    #[test]
+    fn installed_skill_is_static_cli_shim() {
+        let args = InstallHarnessArgs {
+            target: "codex".into(),
+            global: false,
+            project: Some(PathBuf::from("/tmp/brainmap-project")),
+            dry_run: true,
+            uninstall: false,
+        };
+        let plan = plan(&args);
+        let skill = plan
+            .iter()
+            .find(|item| {
+                item.path
+                    .ends_with(".codex/skills/build-decision-engine/SKILL.md")
+            })
+            .unwrap()
+            .contents()
+            .unwrap();
+
+        assert!(skill.contains("brainmap skill build-decision-engine --host codex"));
+        assert!(skill.contains("If that command fails"));
+        assert!(!skill.contains("Use Brainmap to learn decisions, not knowledge."));
     }
 }

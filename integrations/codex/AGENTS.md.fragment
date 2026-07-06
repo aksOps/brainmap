@@ -1,7 +1,6 @@
 <!-- BEGIN BRAINMAP MANAGED BLOCK -->
 Before asking the user a decision question, run `brainmap gate --intent would-ask-user --json`.
-Ask naturally; do not expose Brainmap, policy, or gate internals in user-facing questions.
-Before meaningful action, run `brainmap gate --json`.
-After correction, run `brainmap learn-feedback`.
-Never store secrets or project archives in Brainmap.
+Load current local instructions with `brainmap skill build-decision-engine --host codex`.
+If unavailable, ask naturally; do not expose Brainmap, policy, or gate internals in user-facing questions.
+Never store secrets or project archives.
 <!-- END BRAINMAP MANAGED BLOCK -->

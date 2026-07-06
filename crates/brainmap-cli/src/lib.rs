@@ -12,6 +12,7 @@ mod markdown;
 mod mcp;
 mod model;
 mod privacy;
+mod skill;
 mod snapshot;
 mod util;
 mod vault;
