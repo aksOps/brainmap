@@ -1,6 +1,6 @@
 use crate::cli::{
     ApplyArgs, BuildArgs, CalibrateArgs, CaptureArgs, ExtractArgs, LearnDecisionArgs,
-    LearnFeedbackArgs, RecordDecisionArgs,
+    LearnFeedbackArgs, PruneImportsArgs, RecordDecisionArgs,
 };
 use crate::{index, privacy, util, vault};
 use anyhow::{Result, bail};
@@ -10,15 +10,77 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
-const INTERVIEW_QUESTIONS: &[&str] = &[
-    "What should future agents understand about how you decide that they usually miss?",
-    "What should this decision engine help with: coding choices, design choices, model/tool choices, workflow choices, privacy boundaries, time decisions, or something else?",
-    "What should never be stored or inferred?",
-    "When should an agent ask immediately, batch questions, or make a reversible guess?",
-    "What kinds of details should be treated only as evidence and discarded after extracting the decision pattern?",
-    "What makes a system feel useful instead of heavy or noisy?",
-    "Which decisions can lightweight models/harnesses make automatically, and which require your approval?",
+const INTERVIEW_QUESTIONS: &[InterviewQuestion] = &[
+    InterviewQuestion {
+        prompt: "What should future agents understand about how you decide that they usually miss?",
+        options: &[
+            "A. Prefer reversible local changes first.",
+            "B. Ask before high-risk or irreversible actions.",
+            "C. Optimize for speed unless privacy or data loss is involved.",
+        ],
+        free_text: "Describe the decision habit in your own words.",
+    },
+    InterviewQuestion {
+        prompt: "What should this decision engine help with most?",
+        options: &[
+            "A. Coding and architecture choices.",
+            "B. Tool/model/workflow choices.",
+            "C. Privacy, approval, and risk boundaries.",
+        ],
+        free_text: "List another decision area or rank the options.",
+    },
+    InterviewQuestion {
+        prompt: "What should never be stored or inferred?",
+        options: &[
+            "A. Secrets, credentials, tokens, cookies, and private keys.",
+            "B. Raw project archives, raw transcripts, and copied source blobs.",
+            "C. Personal facts not needed for decision policy.",
+        ],
+        free_text: "Add any extra hard-no storage rule.",
+    },
+    InterviewQuestion {
+        prompt: "When should an agent ask instead of acting?",
+        options: &[
+            "A. Ask immediately for irreversible or account-impacting actions.",
+            "B. Batch low-risk clarifications and proceed with reversible defaults.",
+            "C. Make a conservative guess when confidence is high and rollback is easy.",
+        ],
+        free_text: "Describe the boundary between guessing and asking.",
+    },
+    InterviewQuestion {
+        prompt: "What details should be evidence only and discarded after extracting the decision pattern?",
+        options: &[
+            "A. File names, code snippets, command output, and implementation facts.",
+            "B. One-off project context that does not express a reusable preference.",
+            "C. Temporary debugging traces and logs.",
+        ],
+        free_text: "Name any evidence type that should never become a policy note.",
+    },
+    InterviewQuestion {
+        prompt: "What makes Brainmap useful instead of heavy or noisy?",
+        options: &[
+            "A. Only strong repeated preferences become durable policy.",
+            "B. Weak signals stay pending until confirmed.",
+            "C. The engine asks fewer, better questions with clear options.",
+        ],
+        free_text: "Describe what would feel noisy or overbearing.",
+    },
+    InterviewQuestion {
+        prompt: "Which decisions can the harness make automatically?",
+        options: &[
+            "A. Low-risk reversible workflow defaults.",
+            "B. Local-only implementation choices within existing policy.",
+            "C. None unless the user explicitly approved the category.",
+        ],
+        free_text: "List decisions that always require your approval.",
+    },
 ];
+
+struct InterviewQuestion {
+    prompt: &'static str,
+    options: &'static [&'static str],
+    free_text: &'static str,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdatePacket {
@@ -45,7 +107,9 @@ pub fn build_decision_engine(args: BuildArgs) -> Result<()> {
     let root = vault::resolve_vault(args.vault);
     match args.mode.as_str() {
         "auto" => {
-            println!("AgentMemory optional: unavailable or disabled; using interview fallback.");
+            println!(
+                "AgentMemory can seed Brainmap, but it never replaces required calibration. Ask these when confidence or coverage is missing:"
+            );
             print_questions(args.questions);
         }
         "interview" => {
@@ -54,14 +118,15 @@ pub fn build_decision_engine(args: BuildArgs) -> Result<()> {
             } else {
                 fs::create_dir_all(root.join("99-meta/pending-update-packets"))?;
                 for (i, question) in INTERVIEW_QUESTIONS.iter().take(args.questions).enumerate() {
+                    let human_question = question_text(question);
                     let packet = packet(
                         "interactive",
                         "calibration-question",
-                        question,
+                        question.prompt,
                         "weak",
                         "personal",
                         "ask",
-                        Some((*question).to_string()),
+                        Some(human_question),
                     );
                     write_packet(&root, &format!("interview-{i}"), &packet)?;
                 }
@@ -72,7 +137,9 @@ pub fn build_decision_engine(args: BuildArgs) -> Result<()> {
             }
         }
         "agentmemory" | "agentmemory-mcp" => {
-            println!("AgentMemory source unavailable; fallback questions:");
+            println!(
+                "AgentMemory source is seed context only; required calibration still needs questions with options and free text:"
+            );
             print_questions(args.questions);
         }
         "export" => {
@@ -104,6 +171,8 @@ pub fn build_decision_engine(args: BuildArgs) -> Result<()> {
                     }
                     println!("created {created} AgentMemory export update packet(s)");
                 }
+                println!("AgentMemory import is incomplete until calibration gaps are answered:");
+                print_questions(args.questions);
             } else {
                 println!("export mode needs --file; no mutation performed");
             }
@@ -118,8 +187,22 @@ pub fn build_decision_engine(args: BuildArgs) -> Result<()> {
 
 fn print_questions(n: usize) {
     for (i, question) in INTERVIEW_QUESTIONS.iter().take(n).enumerate() {
-        println!("{}. {}", i + 1, question);
+        println!("{}. {}", i + 1, question.prompt);
+        println!("   Options:");
+        for option in question.options {
+            println!("   - {option}");
+        }
+        println!("   Free text: {}", question.free_text);
     }
+}
+
+fn question_text(question: &InterviewQuestion) -> String {
+    format!(
+        "{} Options: {} Free text: {}",
+        question.prompt,
+        question.options.join(" "),
+        question.free_text
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -140,10 +223,10 @@ fn parse_agentmemory_export(path: &Path) -> Result<Vec<BrainmapSignal>> {
         if should_discard_signal(&text) {
             continue;
         }
-        let lower = text.to_lowercase();
-        if !is_decision_signal(&lower) {
+        if !is_decision_signal(&text) {
             continue;
         }
+        let lower = text.to_lowercase();
         let redacted = privacy::redact(&text);
         let sensitivity = privacy::sensitivity(&text).to_string();
         if sensitivity == "secret" {
@@ -191,23 +274,93 @@ fn should_discard_signal(text: &str) -> bool {
         || lower.contains("node_modules")
 }
 
-fn is_decision_signal(lower: &str) -> bool {
+fn is_decision_signal(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    if lower.split_whitespace().count() < 5 || looks_like_code_or_knowledge_fact(&lower) {
+        return false;
+    }
+
     [
         "user chose",
         "user rejected",
         "user corrected",
         "user preferred",
         "user refused",
+        "future agents should",
+        "agents should",
+        "agent should",
+        "brainmap should",
+        "harness should",
         "should ask",
         "should not ask",
         "ask me",
         "don't ask me",
-        "approval",
-        "tradeoff",
-        "restriction",
-        "default",
-        "prefer",
-        "never",
+        "do not ask me",
+        "requires approval",
+        "approval required",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+        || (has_decision_frame(&lower) && has_decision_action(&lower))
+}
+
+fn looks_like_code_or_knowledge_fact(lower: &str) -> bool {
+    let trimmed = lower.trim();
+    if trimmed.starts_with("--")
+        || trimmed.starts_with('"')
+        || trimmed.contains("\"--")
+        || trimmed.contains("`--")
+        || trimmed.contains(" on github ")
+        || trimmed.contains("stack trace")
+        || trimmed.contains(" must be inspected")
+        || trimmed.contains(" defaults to ")
+        || trimmed.contains(" implements ")
+        || trimmed.contains("user chose to inspect")
+        || trimmed.contains("user chose to examine")
+        || trimmed.contains("user chose to verify")
+        || trimmed.contains("user wants to verify")
+        || trimmed.contains("user wants to check")
+        || trimmed.contains("using a terminal command")
+        || trimmed.contains("implementation details")
+        || trimmed.contains("source files")
+        || trimmed.contains("bearer key")
+        || trimmed.contains("env-var")
+        || trimmed.contains("main.go")
+        || trimmed.contains("line ")
+        || trimmed.contains("b.rate")
+        || trimmed.contains("cfg ")
+        || trimmed.contains("::")
+        || trimmed.contains(".rs")
+        || trimmed.contains(".ts")
+        || trimmed.contains(".tsx")
+        || trimmed.contains(".py")
+    {
+        return true;
+    }
+
+    lower.matches('|').count() >= 3 || lower.matches('\\').count() >= 2
+}
+
+fn has_decision_frame(lower: &str) -> bool {
+    lower.starts_with("when ")
+}
+
+fn has_decision_action(lower: &str) -> bool {
+    [
+        " choose ",
+        " chose ",
+        " prefer ",
+        " preferred ",
+        " default to ",
+        " ask ",
+        " approval ",
+        " reject ",
+        " rejected ",
+        " never ",
+        " must ",
+        " should ",
+        " tradeoff",
+        " restriction",
     ]
     .iter()
     .any(|needle| lower.contains(needle))
@@ -394,6 +547,133 @@ pub fn apply(args: ApplyArgs) -> Result<()> {
     }
     println!("applied {applied} packet(s)");
     Ok(())
+}
+
+pub fn prune_imports(args: PruneImportsArgs) -> Result<()> {
+    let root = vault::resolve_vault(args.vault);
+    let dir = root.join("60-decision-examples");
+    let mut plans = Vec::new();
+    let mut kept = 0usize;
+
+    if dir.exists() {
+        let mut paths = fs::read_dir(&dir)?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("md"))
+            .filter(|path| {
+                path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|stem| stem.starts_with("upd_"))
+            })
+            .collect::<Vec<_>>();
+        paths.sort();
+
+        for path in paths {
+            let rel = path.strip_prefix(&root)?.to_path_buf();
+            let text = fs::read_to_string(&path)?;
+            let signal_text = note_decision_text(&rel, &text);
+            if is_decision_signal(&signal_text) {
+                kept += 1;
+                continue;
+            }
+            let bytes = fs::read(&path)?;
+            plans.push(ArchivePlan {
+                rel,
+                sha256: util::sha256_hex(&bytes),
+                reason: "knowledge-like AgentMemory import".into(),
+            });
+        }
+    }
+
+    if args.dry_run || !args.yes {
+        println!(
+            "would archive {} knowledge-like import note(s); would keep {} decision-like import note(s)",
+            plans.len(),
+            kept
+        );
+        for plan in plans.iter().take(10) {
+            println!("- {}", plan.rel.display());
+        }
+        return Ok(());
+    }
+
+    if plans.is_empty() {
+        println!("archived 0 knowledge-like import note(s); kept {kept}");
+        return Ok(());
+    }
+
+    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let archive_root = root.join("99-meta/archived-knowledge-imports").join(&stamp);
+    let mut entries = Vec::new();
+    for plan in &plans {
+        let from = root.join(&plan.rel);
+        let to = archive_root.join(&plan.rel);
+        util::ensure_parent(&to)?;
+        fs::rename(&from, &to)?;
+        entries.push(ArchiveEntry {
+            original_path: plan.rel.to_string_lossy().to_string(),
+            archive_path: to
+                .strip_prefix(&root)
+                .unwrap_or(&to)
+                .to_string_lossy()
+                .to_string(),
+            sha256: plan.sha256.clone(),
+            reason: plan.reason.clone(),
+        });
+    }
+
+    let manifest = ArchiveManifest {
+        created_at: util::now_iso(),
+        archived_count: entries.len(),
+        kept_count: kept,
+        entries,
+    };
+    util::write_atomic(
+        &archive_root.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest)?.as_slice(),
+    )?;
+    index::rebuild(&root)?;
+    println!(
+        "archived {} knowledge-like import note(s); kept {}; manifest {}",
+        manifest.archived_count,
+        manifest.kept_count,
+        archive_root.join("manifest.json").display()
+    );
+    Ok(())
+}
+
+struct ArchivePlan {
+    rel: PathBuf,
+    sha256: String,
+    reason: String,
+}
+
+#[derive(Serialize)]
+struct ArchiveManifest {
+    #[serde(rename = "createdAt")]
+    created_at: String,
+    #[serde(rename = "archivedCount")]
+    archived_count: usize,
+    #[serde(rename = "keptCount")]
+    kept_count: usize,
+    entries: Vec<ArchiveEntry>,
+}
+
+#[derive(Serialize)]
+struct ArchiveEntry {
+    #[serde(rename = "originalPath")]
+    original_path: String,
+    #[serde(rename = "archivePath")]
+    archive_path: String,
+    sha256: String,
+    reason: String,
+}
+
+fn note_decision_text(rel: &Path, text: &str) -> String {
+    if let Some(note) = crate::markdown::parse_note(rel.to_path_buf(), text) {
+        format!("{} {}", note.title, note.body)
+    } else {
+        text.to_string()
+    }
 }
 
 pub fn calibrate(args: CalibrateArgs) -> Result<()> {
@@ -642,6 +922,14 @@ mod tests {
                 .count()
                 >= 2
         );
+        let packet = fs::read_dir(root.join("99-meta/pending-update-packets"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap();
+        let packet_text = fs::read_to_string(packet.path()).unwrap();
+        assert!(packet_text.contains("Options:"));
+        assert!(packet_text.contains("Free text:"));
     }
 
     #[test]
@@ -655,6 +943,12 @@ mod tests {
             serde_json::json!({
                 "memories": [
                     {"text": "User chose Markdown plus SQLite and rejected external vector DB."},
+                    {"text": "When building local v1 tools, default to Markdown and SQLite unless scale proves otherwise."},
+                    {"text": "Future agents should ask before irreversible deletion."},
+                    {"text": "\"--severity\" defaults to Severity.INFO and accepts BLOCKER, CRITICAL, MAJOR, MINOR, INFO"},
+                    {"text": "$bL.Scale must be inspected to ensure it is never <= 0"},
+                    {"text": "\"sebschmi/deterministic-default-hasher\" on GitHub implements deterministic default hashing"},
+                    {"text": "(--config|profile|target|release) are accepted CLI flags"},
                     {"text": "cargo run -- build project chronology"},
                     {"text": "api_key=abcdef1234567890"}
                 ]
@@ -673,7 +967,103 @@ mod tests {
         let count = fs::read_dir(root.join("99-meta/pending-update-packets"))
             .unwrap()
             .count();
-        assert_eq!(count, 1);
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn signal_filter_rejects_knowledge_facts() {
+        assert!(is_decision_signal(
+            "User chose Markdown plus SQLite and rejected a complex index."
+        ));
+        assert!(is_decision_signal(
+            "When building local v1 tools, default to Markdown and SQLite unless scale proves otherwise."
+        ));
+        assert!(is_decision_signal(
+            "Future agents should prefer questions with clear options when confidence is low."
+        ));
+        assert!(!is_decision_signal(
+            "\"--severity\" defaults to Severity.INFO and accepts BLOCKER, CRITICAL, MAJOR, MINOR, INFO"
+        ));
+        assert!(!is_decision_signal(
+            "$bL.Scale must be inspected to ensure it is never <= 0"
+        ));
+        assert!(!is_decision_signal(
+            "\"sebschmi/deterministic-default-hasher\" on GitHub implements deterministic default hashing"
+        ));
+        assert!(!is_decision_signal(
+            "(--config|profile|target|release) are accepted CLI flags"
+        ));
+        assert!(!is_decision_signal(
+            "App.tsx mounts only ServicesView at line 26; LogsView and its hook are never rendered, so no user can trigger the dead code path"
+        ));
+        assert!(!is_decision_signal(
+            "After confirming that tests succeed, the user plans to introduce a parsePaging helper and clamp logic for paging restrictions."
+        ));
+        assert!(!is_decision_signal(
+            "Agent performs a comprehensive audit of the plugin implementation and verifies CLI command coverage."
+        ));
+        assert!(!is_decision_signal(
+            "User wants to verify that env-var defaults are identical across both reading paths."
+        ));
+        assert!(!is_decision_signal(
+            "The user chose to inspect the design system before implementation."
+        ));
+    }
+
+    #[test]
+    fn prune_imports_archives_knowledge_like_notes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+        write_import_note(
+            &root,
+            "upd_noise",
+            "\"--severity\" defaults to Severity.INFO and accepts BLOCKER, CRITICAL, MAJOR, MINOR, INFO",
+        );
+        write_import_note(
+            &root,
+            "upd_decision",
+            "User chose Markdown plus SQLite and rejected a complex index.",
+        );
+
+        prune_imports(PruneImportsArgs {
+            dry_run: false,
+            yes: true,
+            vault: Some(root.clone()),
+        })
+        .unwrap();
+
+        assert!(!root.join("60-decision-examples/upd_noise.md").exists());
+        assert!(root.join("60-decision-examples/upd_decision.md").exists());
+        let archives = fs::read_dir(root.join("99-meta/archived-knowledge-imports"))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(archives.len(), 1);
+        let archive_root = archives[0].path();
+        assert!(
+            archive_root
+                .join("60-decision-examples/upd_noise.md")
+                .exists()
+        );
+        let manifest = fs::read_to_string(archive_root.join("manifest.json")).unwrap();
+        assert!(manifest.contains("\"archivedCount\": 1"));
+        assert!(manifest.contains("\"sha256\""));
+        let live_paths = vault::load_notes(&root)
+            .unwrap()
+            .into_iter()
+            .map(|note| note.path.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            live_paths
+                .iter()
+                .any(|path| path == "60-decision-examples/upd_decision.md")
+        );
+        assert!(
+            !live_paths
+                .iter()
+                .any(|path| path.contains("archived-knowledge-imports"))
+        );
     }
 
     #[test]
@@ -683,5 +1073,19 @@ mod tests {
         vault::init_vault(Some(root.clone()), false, true).unwrap();
         let err = autopilot_promote(Some(root), "conservative").unwrap_err();
         assert!(err.to_string().contains("promotion denied"));
+    }
+
+    fn write_import_note(root: &Path, stem: &str, title: &str) {
+        let body = format!(
+            "{}# {}\n\n## Claim\n\n{}\n",
+            crate::markdown::frontmatter(stem, "decision-example", "ask-before-action", "personal"),
+            title,
+            title
+        );
+        util::write_atomic(
+            &root.join("60-decision-examples").join(format!("{stem}.md")),
+            body.as_bytes(),
+        )
+        .unwrap();
     }
 }

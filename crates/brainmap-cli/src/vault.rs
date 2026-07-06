@@ -661,6 +661,9 @@ pub fn load_notes(root: &Path) -> Result<Vec<Note>> {
             .strip_prefix(root)
             .with_context(|| format!("strip {}", path.display()))?
             .to_path_buf();
+        if rel.starts_with("99-meta/archived-knowledge-imports") {
+            continue;
+        }
         let text = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
         if let Some(note) = markdown::parse_note(rel, &text) {
             notes.push(note);
