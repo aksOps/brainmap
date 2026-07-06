@@ -264,7 +264,7 @@ pub fn evaluate(root: &Path, input: GateInput) -> Result<GateResponse> {
     let question = match outcome.as_str() {
         "ask_user" => Some(focused_question(&input, selected.as_deref())),
         "needs_more_context" => {
-            Some("What situation, options, and risk should Brainmap evaluate?".into())
+            Some("What situation, options, and risk should I use for this decision?".into())
         }
         _ => None,
     };
@@ -384,7 +384,7 @@ fn focused_question(input: &GateInput, selected: Option<&str>) -> String {
     if let Some(selected) = selected {
         format!("Proceed with {selected}, or choose another option?")
     } else if input.options.is_empty() {
-        "What option should Brainmap compare against the default reversible path?".into()
+        "What option should I compare against the default reversible path?".into()
     } else {
         format!(
             "Which option should be chosen: {}?",
@@ -471,5 +471,28 @@ mod tests {
         )
         .unwrap();
         assert_eq!(res.outcome, "ask_user");
+        assert!(!res.ask_user_question.unwrap().contains("Brainmap"));
+    }
+
+    #[test]
+    fn empty_options_question_hides_policy_layer() {
+        let (_tmp, root) = temp_vault();
+        let res = evaluate(
+            &root,
+            GateInput {
+                intent: "would-ask-user".into(),
+                situation: "Need choose publishing flow for finished work".into(),
+                options: vec![],
+                proposed_action: String::new(),
+                risk: "medium".into(),
+                reversible: Some(false),
+                decision_type: "workflow".into(),
+                agent_confidence: None,
+                dry_run: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(res.outcome, "ask_user");
+        assert!(!res.ask_user_question.unwrap().contains("Brainmap"));
     }
 }

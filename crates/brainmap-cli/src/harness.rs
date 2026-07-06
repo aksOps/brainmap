@@ -80,21 +80,38 @@ pub fn hook(args: HookArgs) -> Result<()> {
     let response = gate::evaluate(&root, hook_gate_input(&args.host, &args.event, &payload))?;
 
     if hook_should_block(&args.event, &response.outcome) {
-        eprintln!("Brainmap blocked agent action: {}", response.recommendation);
+        let label = if response.outcome == "block" {
+            "Action rejected"
+        } else {
+            "Action needs confirmation"
+        };
+        eprintln!("{label}: {}", response.recommendation);
         if let Some(question) = response.ask_user_question {
-            eprintln!("Brainmap asks: {question}");
+            eprintln!("{question}");
         }
         std::process::exit(2);
     }
 
-    if is_user_prompt(&args.event) {
-        println!(
-            "Brainmap hook: outcome={} confidence={:.2}; {}",
-            response.outcome, response.confidence, response.recommendation
-        );
+    if is_user_prompt(&args.event)
+        && let Some(advice) = user_prompt_advice(&response)
+    {
+        println!("{advice}");
     }
 
     Ok(())
+}
+
+fn user_prompt_advice(response: &gate::GateResponse) -> Option<String> {
+    match response.outcome.as_str() {
+        "ask_user" => Some(
+            response
+                .ask_user_question
+                .clone()
+                .unwrap_or_else(|| response.recommendation.clone()),
+        ),
+        "no_action" => Some("No need to ask this question.".into()),
+        _ => None,
+    }
 }
 
 fn parse_options(value: Option<serde_json::Value>) -> Vec<String> {
@@ -244,5 +261,30 @@ mod tests {
         assert!(hook_should_block("UserPromptSubmit", "block"));
         assert!(!hook_should_block("UserPromptSubmit", "ask_user"));
         assert!(!hook_should_block("PreToolUse", "proceed"));
+    }
+
+    #[test]
+    fn user_prompt_advice_hides_policy_layer() {
+        let advice = user_prompt_advice(&gate::GateResponse {
+            decision_id: "dec_test".into(),
+            outcome: "ask_user".into(),
+            recommendation: "Ask before proceeding.".into(),
+            selected_option: None,
+            rejected_options: vec![],
+            confidence: 0.56,
+            risk_tier: "ask_before_action".into(),
+            reasoning_summary: vec![],
+            matched_policies: vec![],
+            restrictions_applied: vec![],
+            ask_user_question: Some("Which path should I take?".into()),
+            default_if_no_answer: None,
+            learning_event: serde_json::json!({}),
+        })
+        .unwrap();
+
+        assert_eq!(advice, "Which path should I take?");
+        assert!(!advice.contains("Brainmap"));
+        assert!(!advice.contains("outcome="));
+        assert!(!advice.contains("confidence="));
     }
 }
