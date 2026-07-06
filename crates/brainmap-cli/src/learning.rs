@@ -1052,7 +1052,7 @@ mod tests {
         let live_paths = vault::load_notes(&root)
             .unwrap()
             .into_iter()
-            .map(|note| note.path.to_string_lossy().to_string())
+            .map(|note| note.path.to_string_lossy().replace('\\', "/"))
             .collect::<Vec<_>>();
         assert!(
             live_paths
