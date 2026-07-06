@@ -106,6 +106,11 @@ fn plan(args: &InstallHarnessArgs) -> Vec<PlanItem> {
         ],
         "codex" => vec![
             PlanItem {
+                path: base.join(".codex/skills/build-decision-engine/SKILL.md"),
+                enforcement: "instruction+skill",
+                action: PlanAction::Text(skill("Codex")),
+            },
+            PlanItem {
                 path: base.join("AGENTS.md"),
                 enforcement: "instruction fallback",
                 action: PlanAction::Text(managed_block("Codex")),
@@ -340,5 +345,23 @@ mod tests {
             entry,
             "brainmap harness hook --host codex --event PreToolUse"
         )));
+    }
+
+    #[test]
+    fn codex_plan_installs_skill() {
+        let args = InstallHarnessArgs {
+            target: "codex".into(),
+            global: false,
+            project: Some(PathBuf::from("/tmp/brainmap-project")),
+            dry_run: true,
+            uninstall: false,
+        };
+        let plan = plan(&args);
+
+        assert!(plan.iter().any(|item| item.path
+            == PathBuf::from(
+                "/tmp/brainmap-project/.codex/skills/build-decision-engine/SKILL.md"
+            )
+            && item.enforcement == "instruction+skill"));
     }
 }
