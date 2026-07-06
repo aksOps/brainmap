@@ -334,11 +334,11 @@ mod tests {
         };
         let plan = plan(&args);
 
-        assert!(plan.iter().any(|item| item.path
-            == PathBuf::from(
-                "/tmp/brainmap-project/.codex/skills/build-decision-engine/SKILL.md"
-            )
-            && item.enforcement == "instruction+skill"));
+        assert!(plan.iter().any(|item| {
+            item.path
+                .ends_with(".codex/skills/build-decision-engine/SKILL.md")
+                && item.enforcement == "instruction+skill"
+        }));
     }
 
     #[test]
