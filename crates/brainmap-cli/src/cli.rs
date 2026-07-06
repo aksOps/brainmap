@@ -1,6 +1,6 @@
 use crate::{
-    bench, context, eval, export, gate, harness, index, install, learning, mcp, model, snapshot,
-    util, vault, web,
+    bench, context, eval, export, gate, harness, index, install, learning, mcp, model, skill,
+    snapshot, util, vault, web,
 };
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -67,6 +67,7 @@ enum Command {
     Web(WebArgs),
     Mcp(McpArgs),
     Harness(HarnessArgs),
+    Skill(SkillArgs),
     Install(InstallArgs),
     Snapshot(SnapshotArgs),
     Rollback(RollbackArgs),
@@ -511,6 +512,18 @@ enum HarnessCommand {
 }
 
 #[derive(Args)]
+struct SkillArgs {
+    #[command(subcommand)]
+    command: SkillCommand,
+}
+
+#[derive(Subcommand)]
+enum SkillCommand {
+    #[command(name = "build-decision-engine")]
+    BuildDecisionEngine(skill::BuildDecisionEngineSkillArgs),
+}
+
+#[derive(Args)]
 struct InstallArgs {
     #[command(subcommand)]
     command: InstallCommand,
@@ -653,6 +666,9 @@ pub fn run() -> Result<()> {
         Command::Harness(args) => match args.command {
             HarnessCommand::Stdio(args) => harness::stdio(args),
             HarnessCommand::Hook(args) => harness::hook(args),
+        },
+        Command::Skill(args) => match args.command {
+            SkillCommand::BuildDecisionEngine(args) => skill::build_decision_engine_cmd(args),
         },
         Command::Install(args) => match args.command {
             InstallCommand::Harness(args) => install::install_harness(args),
