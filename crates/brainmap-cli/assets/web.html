@@ -1,0 +1,1400 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Brainmap Decision Engine</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: oklch(9% 0.018 248);
+      --panel: oklch(14% 0.018 248);
+      --panel-2: oklch(17% 0.022 248);
+      --panel-3: oklch(20% 0.026 248);
+      --fg: oklch(91% 0.018 232);
+      --muted: oklch(67% 0.025 232);
+      --dim: oklch(48% 0.024 232);
+      --border: oklch(26% 0.025 248);
+      --border-strong: oklch(36% 0.04 232);
+      --cyan: oklch(76% 0.14 205);
+      --green: oklch(72% 0.15 155);
+      --amber: oklch(78% 0.14 78);
+      --red: oklch(66% 0.16 28);
+      --violet: oklch(71% 0.12 286);
+      --font-display: "Aptos Display", "Segoe UI Variable Display", "SF Pro Display", system-ui, sans-serif;
+      --font-body: "Aptos", "Segoe UI Variable Text", "SF Pro Text", system-ui, sans-serif;
+      --font-mono: "Cascadia Mono", "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      min-height: 100%;
+      background: var(--bg);
+    }
+
+    body {
+      min-width: 320px;
+      min-height: 100vh;
+      margin: 0;
+      color: var(--fg);
+      font-family: var(--font-body);
+      letter-spacing: 0;
+      background:
+        linear-gradient(90deg, oklch(100% 0 0 / 0.035) 1px, transparent 1px),
+        linear-gradient(0deg, oklch(100% 0 0 / 0.025) 1px, transparent 1px),
+        repeating-linear-gradient(135deg, transparent 0 32px, oklch(76% 0.14 205 / 0.018) 32px 33px),
+        linear-gradient(135deg, oklch(8% 0.014 250), oklch(11% 0.02 240) 48%, oklch(7% 0.012 220));
+      background-size: 44px 44px, 44px 44px, auto, auto;
+      overflow-x: hidden;
+    }
+
+    button {
+      font: inherit;
+    }
+
+    button {
+      color: inherit;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 238px minmax(0, 1fr) 356px;
+      grid-template-rows: auto 1fr;
+      grid-template-areas:
+        "sidebar topbar inspector"
+        "sidebar main inspector";
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      grid-area: sidebar;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 22px;
+      padding: 18px 14px;
+      border-right: 1px solid var(--border);
+      background: oklch(10% 0.017 248 / 0.88);
+      backdrop-filter: blur(18px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border: 1px solid oklch(68% 0.12 205 / 0.58);
+      border-radius: 8px;
+      color: var(--cyan);
+      font: 700 13px/1 var(--font-mono);
+      background:
+        linear-gradient(135deg, oklch(74% 0.13 205 / 0.18), transparent),
+        oklch(14% 0.024 238);
+      box-shadow: inset 0 0 18px oklch(72% 0.13 205 / 0.12);
+    }
+
+    .brand b {
+      display: block;
+      font: 650 18px/1.1 var(--font-display);
+    }
+
+    .brand span,
+    .runtime-card span,
+    .eyebrow,
+    .label,
+    .table-wrap th {
+      color: var(--muted);
+      font: 600 10px/1.3 var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .nav {
+      display: grid;
+      align-content: start;
+      gap: 5px;
+      min-width: 0;
+    }
+
+    .nav a {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-height: 34px;
+      padding: 8px 10px;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      color: oklch(78% 0.025 238);
+      font-size: 13px;
+    }
+
+    .nav a::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border: 1px solid currentColor;
+      border-radius: 50%;
+      opacity: 0.6;
+    }
+
+    .nav a:hover,
+    .nav a:focus-visible,
+    .nav a.active {
+      outline: none;
+      color: var(--fg);
+      border-color: oklch(36% 0.048 232);
+      background: oklch(18% 0.026 240 / 0.82);
+    }
+
+    .nav a.active::before {
+      background: var(--cyan);
+      border-color: var(--cyan);
+      box-shadow: 0 0 16px oklch(76% 0.14 205 / 0.65);
+    }
+
+    .runtime-card {
+      display: grid;
+      gap: 12px;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: oklch(14% 0.018 245 / 0.74);
+    }
+
+    .runtime-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--fg);
+      font: 600 12px/1.2 var(--font-mono);
+    }
+
+    .topbar {
+      grid-area: topbar;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: center;
+      padding: 18px 22px 14px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, oklch(10% 0.017 248 / 0.9), oklch(10% 0.017 248 / 0.62));
+      backdrop-filter: blur(18px);
+      z-index: 2;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin: 0;
+    }
+
+    h1 {
+      font: 680 clamp(24px, 2.1vw, 36px)/1.02 var(--font-display);
+      text-wrap: balance;
+    }
+
+    h2 {
+      font: 650 15px/1.2 var(--font-display);
+    }
+
+    h3 {
+      font: 650 13px/1.25 var(--font-display);
+    }
+
+    .subhead {
+      max-width: 820px;
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+      text-wrap: pretty;
+    }
+
+    .status-strip {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .chip,
+    .status,
+    .outcome,
+    .wiki {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 24px;
+      padding: 4px 8px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: oklch(81% 0.028 232);
+      background: oklch(16% 0.022 244 / 0.78);
+      font: 650 11px/1 var(--font-mono);
+      white-space: nowrap;
+    }
+
+    .status::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 14px oklch(72% 0.15 155 / 0.72);
+    }
+
+    .status.warn::before,
+    .outcome.hold::before {
+      background: var(--amber);
+      box-shadow: 0 0 14px oklch(78% 0.14 78 / 0.66);
+    }
+
+    .status.stop::before,
+    .outcome.block::before {
+      background: var(--red);
+      box-shadow: 0 0 14px oklch(66% 0.16 28 / 0.66);
+    }
+
+    .workspace {
+      grid-area: main;
+      min-width: 0;
+      padding: 18px 22px 26px;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .metric {
+      min-width: 0;
+      padding: 13px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: linear-gradient(180deg, oklch(17% 0.024 246 / 0.88), oklch(13% 0.018 246 / 0.88));
+    }
+
+    .metric strong {
+      display: block;
+      margin-top: 9px;
+      font: 700 clamp(24px, 2.2vw, 34px)/0.95 var(--font-mono);
+      color: var(--fg);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .metric small {
+      display: block;
+      margin-top: 7px;
+      color: var(--dim);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .cockpit-grid,
+    .lower-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.42fr) minmax(300px, 0.58fr);
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .lower-grid {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      margin-top: 12px;
+    }
+
+    .panel {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: oklch(14% 0.02 246 / 0.82);
+      box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.035);
+      overflow: hidden;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 46px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      background: oklch(17% 0.022 246 / 0.72);
+    }
+
+    .panel-body {
+      padding: 14px;
+    }
+
+    .decision-map {
+      position: relative;
+      min-height: 560px;
+    }
+
+    .map-canvas,
+    .brain-atlas,
+    .map-scan {
+      position: absolute;
+      inset: 46px 0 0;
+      width: 100%;
+      height: calc(100% - 46px);
+    }
+
+    .map-canvas {
+      opacity: 0.8;
+    }
+
+    .map-scan {
+      pointer-events: none;
+      background:
+        linear-gradient(90deg, transparent, oklch(76% 0.14 205 / 0.08), transparent),
+        repeating-linear-gradient(0deg, transparent 0 11px, oklch(100% 0 0 / 0.025) 12px);
+      mix-blend-mode: screen;
+      opacity: 0.42;
+      transform: translateX(-32%);
+      animation: scan 10s cubic-bezier(0.23, 1, 0.32, 1) infinite;
+    }
+
+    .brain-atlas {
+      pointer-events: none;
+      padding: 34px clamp(10px, 3vw, 42px) 28px;
+      filter: drop-shadow(0 0 28px oklch(76% 0.14 205 / 0.14));
+    }
+
+    .atlas-shell {
+      fill: oklch(24% 0.05 215 / 0.58);
+      stroke: oklch(74% 0.13 205 / 0.72);
+      stroke-width: 2.4;
+    }
+
+    .atlas-region {
+      fill: oklch(33% 0.075 214 / 0.42);
+      stroke: oklch(76% 0.14 205 / 0.5);
+      stroke-width: 1.2;
+    }
+
+    .atlas-region.safety {
+      fill: oklch(39% 0.08 155 / 0.34);
+      stroke: oklch(72% 0.15 155 / 0.54);
+    }
+
+    .atlas-region.restrict {
+      fill: oklch(42% 0.09 78 / 0.34);
+      stroke: oklch(78% 0.14 78 / 0.58);
+    }
+
+    .fold {
+      fill: none;
+      stroke: oklch(84% 0.08 205 / 0.32);
+      stroke-width: 1.15;
+      stroke-linecap: round;
+    }
+
+    .brain-label {
+      fill: oklch(91% 0.018 232);
+      font: 700 12px var(--font-mono);
+      letter-spacing: 0;
+    }
+
+    .brain-label.muted {
+      fill: oklch(68% 0.04 232);
+      font-weight: 600;
+      font-size: 10px;
+    }
+
+    .map-tag {
+      position: absolute;
+      left: var(--x);
+      top: var(--y);
+      z-index: 1;
+      max-width: 190px;
+      padding: 7px 8px;
+      border: 1px solid oklch(70% 0.12 205 / 0.38);
+      border-radius: 6px;
+      color: oklch(88% 0.035 215);
+      background: oklch(10% 0.02 245 / 0.8);
+      box-shadow: 0 0 22px oklch(76% 0.14 205 / 0.1);
+      font: 650 11px/1.25 var(--font-mono);
+      transform: translate(-50%, -50%);
+      backdrop-filter: blur(8px);
+    }
+
+    .map-tag b {
+      color: var(--cyan);
+      font-weight: 750;
+    }
+
+    .tradeoff-panel {
+      min-height: 560px;
+    }
+
+    .tradeoff-plot {
+      display: block;
+      width: 100%;
+      height: 250px;
+      margin-bottom: 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background:
+        linear-gradient(90deg, oklch(100% 0 0 / 0.035) 1px, transparent 1px),
+        linear-gradient(0deg, oklch(100% 0 0 / 0.03) 1px, transparent 1px),
+        oklch(11% 0.017 245 / 0.82);
+      background-size: 42px 42px;
+    }
+
+    .plot-axis {
+      stroke: oklch(72% 0.028 232 / 0.45);
+      stroke-width: 1;
+    }
+
+    .plot-line {
+      fill: none;
+      stroke: var(--cyan);
+      stroke-width: 2.2;
+      stroke-linecap: round;
+    }
+
+    .plot-band {
+      fill: oklch(76% 0.14 205 / 0.08);
+      stroke: none;
+    }
+
+    .plot-point {
+      stroke: oklch(8% 0.018 248);
+      stroke-width: 2;
+    }
+
+    .stack {
+      display: grid;
+      gap: 9px;
+    }
+
+    .row,
+    .policy-row,
+    .trigger-row,
+    .calibration-row,
+    .restriction-row {
+      display: grid;
+      gap: 8px;
+      min-width: 0;
+      padding: 10px 0;
+      border-bottom: 1px solid oklch(100% 0 0 / 0.06);
+    }
+
+    .row:last-child,
+    .policy-row:last-child,
+    .trigger-row:last-child,
+    .calibration-row:last-child,
+    .restriction-row:last-child {
+      border-bottom: 0;
+    }
+
+    .row-head,
+    .policy-head,
+    .trigger-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .wiki {
+      width: fit-content;
+      border-color: oklch(76% 0.14 205 / 0.22);
+      color: oklch(82% 0.085 205);
+      background: oklch(20% 0.032 220 / 0.6);
+    }
+
+    .copy {
+      color: oklch(78% 0.024 232);
+      font-size: 13px;
+      line-height: 1.45;
+      text-wrap: pretty;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .bar {
+      height: 7px;
+      border-radius: 999px;
+      background: oklch(100% 0 0 / 0.07);
+      overflow: hidden;
+    }
+
+    .bar i {
+      display: block;
+      width: calc(var(--value) * 1%);
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--cyan), var(--green));
+    }
+
+    .bar.warn i {
+      background: linear-gradient(90deg, var(--amber), var(--green));
+    }
+
+    .bar.danger i {
+      background: linear-gradient(90deg, var(--red), var(--amber));
+    }
+
+    .table-panel {
+      margin-top: 12px;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      min-width: 860px;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th,
+    td {
+      padding: 11px 12px;
+      border-bottom: 1px solid oklch(100% 0 0 / 0.06);
+      text-align: left;
+      vertical-align: middle;
+    }
+
+    td {
+      color: oklch(80% 0.023 232);
+    }
+
+    .decision-button {
+      display: inline-flex;
+      max-width: 100%;
+      padding: 0;
+      border: 0;
+      color: var(--fg);
+      background: transparent;
+      cursor: pointer;
+      text-align: left;
+      font-weight: 650;
+    }
+
+    .decision-button:hover,
+    .decision-button:focus-visible {
+      color: var(--cyan);
+      outline: none;
+    }
+
+    tr.selected td {
+      background: oklch(76% 0.14 205 / 0.06);
+    }
+
+    .outcome::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 12px oklch(72% 0.15 155 / 0.6);
+    }
+
+    .outcome.inspect::before {
+      background: var(--cyan);
+    }
+
+    .mono {
+      font-family: var(--font-mono);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .inspector {
+      grid-area: inspector;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      min-width: 0;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      border-left: 1px solid var(--border);
+      background: oklch(10% 0.017 248 / 0.9);
+      backdrop-filter: blur(18px);
+    }
+
+    .inspector-header {
+      padding: 18px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .inspector-body {
+      min-height: 0;
+      overflow: auto;
+      padding: 14px 18px 22px;
+    }
+
+    .score-ring {
+      width: 116px;
+      height: 116px;
+      margin: 6px auto 18px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background:
+        conic-gradient(var(--cyan) calc(var(--score) * 1%), oklch(100% 0 0 / 0.08) 0),
+        radial-gradient(circle, oklch(12% 0.018 248) 58%, transparent 59%);
+    }
+
+    .score-ring span {
+      font: 760 28px/1 var(--font-mono);
+    }
+
+    .inspector-title {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 18px;
+    }
+
+    .kv {
+      display: grid;
+      grid-template-columns: 96px minmax(0, 1fr);
+      gap: 8px;
+      align-items: start;
+      padding: 9px 0;
+      border-bottom: 1px solid oklch(100% 0 0 / 0.055);
+      font-size: 13px;
+    }
+
+    .kv:last-child {
+      border-bottom: 0;
+    }
+
+    .pill-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .timeline {
+      display: grid;
+      gap: 11px;
+      margin-top: 8px;
+    }
+
+    .timeline-item {
+      position: relative;
+      padding-left: 18px;
+      color: oklch(78% 0.023 232);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .timeline-item::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 5px;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--cyan);
+      box-shadow: 0 0 14px oklch(76% 0.14 205 / 0.55);
+    }
+
+    @keyframes scan {
+      0% { transform: translateX(-38%); opacity: 0; }
+      15% { opacity: 0.36; }
+      60% { opacity: 0.16; }
+      100% { transform: translateX(38%); opacity: 0; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+      }
+    }
+
+    @media (max-width: 1320px) {
+      .app {
+        grid-template-columns: 220px minmax(0, 1fr);
+        grid-template-areas:
+          "sidebar topbar"
+          "sidebar main"
+          "sidebar inspector";
+      }
+
+      .inspector {
+        position: relative;
+        height: auto;
+        border-top: 1px solid var(--border);
+        border-left: 0;
+      }
+
+      .inspector-body {
+        display: grid;
+        grid-template-columns: 240px minmax(0, 1fr);
+        gap: 20px;
+        overflow: visible;
+      }
+    }
+
+    @media (max-width: 1020px) {
+      .metrics,
+      .cockpit-grid,
+      .lower-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .cockpit-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .tradeoff-panel,
+      .decision-map {
+        min-height: 480px;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .app {
+        display: block;
+      }
+
+      .sidebar {
+        position: relative;
+        height: auto;
+        padding: 14px;
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .nav {
+        display: flex;
+        gap: 8px;
+        overflow-x: auto;
+        padding-bottom: 4px;
+      }
+
+      .nav a {
+        flex: 0 0 auto;
+      }
+
+      .topbar {
+        grid-template-columns: 1fr;
+        padding: 16px 14px;
+      }
+
+      .status-strip {
+        justify-content: flex-start;
+      }
+
+      .workspace {
+        padding: 14px;
+      }
+
+      .metrics,
+      .lower-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .decision-map,
+      .tradeoff-panel {
+        min-height: 430px;
+      }
+
+      .map-tag {
+        max-width: 142px;
+        font-size: 10px;
+      }
+
+      .inspector-body {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand" aria-label="Brainmap">
+        <div class="brand-mark">BM</div>
+        <div>
+          <b>Brainmap</b>
+          <span>Decision Engine</span>
+        </div>
+      </div>
+      <nav class="nav" aria-label="Read-only sections">
+        <a class="active" href="#cockpit">Cockpit</a>
+        <a href="#policies">Policies</a>
+        <a href="#triggers">Questions</a>
+        <a href="#restrictions">Restrictions</a>
+        <a href="#calibration">Calibration</a>
+        <a href="#recent">Decisions</a>
+      </nav>
+      <div class="runtime-card">
+        <span>Local runtime</span>
+        <div class="runtime-row"><small>Mode</small><strong>read-only</strong></div>
+        <div class="runtime-row"><small>Host</small><strong>linux</strong></div>
+        <div class="runtime-row"><small>Network</small><strong>disabled</strong></div>
+      </div>
+    </aside>
+
+    <header class="topbar">
+      <div>
+        <h1>Decision cockpit for local policy reasoning</h1>
+        <p class="subhead">Inspect decisions, tradeoff models, calibration drift, question triggers, and binding restrictions without exposing any mutation path.</p>
+      </div>
+      <div class="status-strip" aria-label="Runtime status">
+        <span class="status">Local store mounted</span>
+        <span class="status warn">4 pending questions</span>
+        <span class="status stop">1 hard restriction</span>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <section class="metrics" aria-label="Decision metrics"></section>
+
+      <section class="cockpit-grid" id="cockpit">
+        <section class="panel decision-map" aria-label="Decision map">
+          <div class="panel-header">
+            <div>
+              <div class="eyebrow">central model</div>
+              <h2>Neural policy atlas</h2>
+            </div>
+            <span class="chip" id="rendererStatus">renderer initializing</span>
+          </div>
+          <canvas class="map-canvas" id="decisionField" aria-hidden="true"></canvas>
+          <div class="map-scan" aria-hidden="true"></div>
+          <svg class="brain-atlas" viewBox="0 0 760 460" role="img" aria-label="Brainmap atlas with policy regions and decision links">
+            <path class="atlas-shell" d="M143 259c-37-25-53-72-34-118 16-40 52-67 101-78 28-38 92-48 135-22 31-13 77-4 101 22 53-1 99 34 103 84 43 12 70 50 61 91-10 45-54 71-107 64-27 31-80 44-127 28-37 27-99 28-137-2-37 7-70-8-96-69Z"/>
+            <path class="atlas-region" d="M154 157c25-46 70-72 124-76 19 26 18 70-5 101-36-12-79-8-119-25Z"/>
+            <path class="atlas-region" d="M284 76c51-22 114-9 151 30-6 41-33 75-72 92-28-29-56-58-79-122Z"/>
+            <path class="atlas-region restrict" d="M438 109c55 3 99 39 106 88-25 21-69 28-109 17-7-36-8-67 3-105Z"/>
+            <path class="atlas-region safety" d="M150 181c40 12 84 11 126 16 8 45-6 83-46 112-46-1-84-24-102-64-9-22-2-48 22-64Z"/>
+            <path class="atlas-region" d="M286 205c47-7 102-2 146 19 0 44-28 82-72 99-50 0-91-26-112-66 4-21 16-38 38-52Z"/>
+            <path class="atlas-region restrict" d="M443 226c38 11 78 9 114-6 19 34 7 69-26 86-39 22-92 18-126-10 20-20 32-43 38-70Z"/>
+            <path class="atlas-region" d="M520 319c41-6 77 10 91 41-11 32-50 49-91 37-27-8-47-26-59-49 16-15 35-25 59-29Z"/>
+            <path class="atlas-region safety" d="M423 335c31 10 54 33 63 64-24 22-66 25-97 5-29-18-45-45-48-77 27-1 55 2 82 8Z"/>
+            <path class="fold" d="M184 132c41 5 72 19 91 48M301 93c23 29 39 62 48 99M402 116c-12 31-10 61 6 92M177 216c34-7 64-1 90 20M300 237c44-8 82-2 115 18M463 260c29 9 58 9 87 0M236 292c38 28 81 37 128 27M408 364c31-4 56 4 75 24M508 354c29-4 54 3 75 22"/>
+            <path class="fold" d="M118 253c-29 14-42 39-38 74 6 45 46 73 92 68 32-4 53-22 60-54M171 396c36 22 90 19 118-7" opacity="0.55"/>
+            <text class="brain-label" x="168" y="124">[[Policy:LocalOnly]]</text>
+            <text class="brain-label muted" x="318" y="137">tradeoff model</text>
+            <text class="brain-label" x="452" y="184">[[Restriction:Network]]</text>
+            <text class="brain-label muted" x="176" y="266">question triggers</text>
+            <text class="brain-label muted" x="408" y="291">calibration</text>
+            <text class="brain-label" x="498" y="366">examples</text>
+          </svg>
+          <div class="map-tag" style="--x: 20%; --y: 34%;"><b>82%</b><br>policy coverage</div>
+          <div class="map-tag" style="--x: 58%; --y: 45%;">[[Model:TradeoffFrontier]]</div>
+          <div class="map-tag" style="--x: 78%; --y: 62%;"><b>DEC-042</b><br>release hold</div>
+          <div class="map-tag" style="--x: 39%; --y: 73%;">[[Question:EvidenceGap]]</div>
+        </section>
+
+        <section class="panel tradeoff-panel" aria-label="Tradeoff graph">
+          <div class="panel-header">
+            <div>
+              <div class="eyebrow">frontier</div>
+              <h2>Tradeoff model</h2>
+            </div>
+            <span class="chip">safety weighted</span>
+          </div>
+          <div class="panel-body">
+            <svg class="tradeoff-plot" id="tradeoffPlot" viewBox="0 0 520 250" role="img" aria-label="Safety and velocity tradeoff plot"></svg>
+            <div class="stack" id="tradeoffList"></div>
+          </div>
+        </section>
+      </section>
+
+      <section class="lower-grid">
+        <section class="panel" id="policies">
+          <div class="panel-header">
+            <div>
+              <div class="eyebrow">binding policies</div>
+              <h2>Policy surface</h2>
+            </div>
+            <span class="chip">6 active</span>
+          </div>
+          <div class="panel-body stack" id="policyList"></div>
+        </section>
+
+        <section class="panel" id="triggers">
+          <div class="panel-header">
+            <div>
+              <div class="eyebrow">question triggers</div>
+              <h2>Required clarifications</h2>
+            </div>
+            <span class="chip">read only</span>
+          </div>
+          <div class="panel-body stack" id="triggerList"></div>
+        </section>
+      </section>
+
+      <section class="lower-grid">
+        <section class="panel" id="restrictions">
+          <div class="panel-header">
+            <div>
+              <div class="eyebrow">restriction ledger</div>
+              <h2>Hard limits</h2>
+            </div>
+            <span class="chip">local fixture</span>
+          </div>
+          <div class="panel-body stack" id="restrictionList"></div>
+        </section>
+
+        <section class="panel" id="calibration">
+          <div class="panel-header">
+            <div>
+              <div class="eyebrow">model health</div>
+              <h2>Calibration drift</h2>
+            </div>
+            <span class="chip">last 24h</span>
+          </div>
+          <div class="panel-body stack" id="calibrationList"></div>
+        </section>
+      </section>
+
+      <section class="panel table-panel" id="recent">
+        <div class="panel-header">
+          <div>
+            <div class="eyebrow">recent decisions</div>
+            <h2>Decision log</h2>
+          </div>
+          <span class="chip">append-only</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Decision</th>
+                <th>Outcome</th>
+                <th>Confidence</th>
+                <th>Primary policy</th>
+                <th>Restriction</th>
+                <th>Latency</th>
+              </tr>
+            </thead>
+            <tbody id="decisionRows"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <aside class="inspector" aria-label="Decision inspector">
+      <div class="inspector-header">
+        <div class="eyebrow">detail inspector</div>
+        <h2 id="inspectorHeading">Decision</h2>
+      </div>
+      <div class="inspector-body" id="inspectorBody"></div>
+    </aside>
+  </div>
+
+  <script>
+    const DATA = {
+      metrics: [
+        { label: "Policy coverage", value: "82%", note: "31 of 38 observed branches resolve without external context" },
+        { label: "Calibration error", value: "0.12", note: "Brier drift across shadow decisions, trailing 24h" },
+        { label: "Hard blocks", value: "14", note: "Restrictions prevented unsafe or non-local outcomes" },
+        { label: "Question debt", value: "4", note: "Clarifications required before confident resolution" }
+      ],
+      tradeoffs: [
+        { name: "[[Axis:Safety]]", value: 91, tone: "green", text: "Dominates when evidence source, locality, or rollback certainty is weak." },
+        { name: "[[Axis:Velocity]]", value: 54, tone: "warn", text: "Permitted only inside reversible, low-blast-radius decisions." },
+        { name: "[[Axis:Autonomy]]", value: 33, tone: "danger", text: "Suppressed by read-only runtime and local-first restrictions." },
+        { name: "[[Axis:Explainability]]", value: 87, tone: "green", text: "Requires visible policy references and traceable question triggers." }
+      ],
+      policies: [
+        { id: "[[Policy:LocalOnly]]", status: "binding", text: "Reject decisions that require remote fetches, hosted telemetry, identity handoffs, or provider callbacks." },
+        { id: "[[Policy:EvidenceBeforeAction]]", status: "binding", text: "When evidence confidence falls below 0.72, downgrade outcome to inspect or ask a question." },
+        { id: "[[Policy:RollbackWeighted]]", status: "active", text: "Favor reversible steps unless the decision has a clear safety improvement and a named owner." },
+        { id: "[[Policy:SingleUserDaemon]]", status: "active", text: "Assume Linux local single-user operation; hide tenancy, billing, and shared workspace primitives." },
+        { id: "[[Policy:RestrictionFirst]]", status: "binding", text: "Evaluate hard restrictions before tradeoff scoring so blocked paths never look merely low priority." },
+        { id: "[[Policy:TraceableReason]]", status: "active", text: "Each outcome must cite at least one policy, one model axis, and one fixture or observed example." }
+      ],
+      triggers: [
+        { id: "[[Question:EvidenceGap]]", threshold: "< 0.72", text: "Ask for source, timestamp, or local artifact path when the evidence chain is incomplete." },
+        { id: "[[Question:BlastRadius]]", threshold: "> medium", text: "Ask which daemon surface, file path, or runtime namespace is affected before approving a path." },
+        { id: "[[Question:PolicyConflict]]", threshold: "2+ policies", text: "Ask the operator to choose the governing policy when safety and velocity scores tie." },
+        { id: "[[Question:HumanOverride]]", threshold: "manual note", text: "Show override context as an inspection fact, not as an editable control." }
+      ],
+      restrictions: [
+        { id: "[[Restriction:NoNetworkRuntime]]", severity: "hard", text: "Runtime UI cannot initiate network requests, remote measurement beacons, remote assets, or provider calls." },
+        { id: "[[Restriction:ReadOnlySurface]]", severity: "hard", text: "Frontend may inspect decisions and policies but must not expose create, update, delete, approve, or retry affordances." },
+        { id: "[[Restriction:LocalFixturesOnly]]", severity: "hard", text: "Demo data is embedded in the artifact and must not imply remote synchronization." },
+        { id: "[[Restriction:DaemonEmbeddable]]", severity: "guard", text: "Keep the artifact static and bundler-friendly for later Rust daemon embedding." }
+      ],
+      calibration: [
+        { id: "Shadow agreement", value: 76, tone: "warn", text: "Production and shadow outcomes agree on 19 of 25 sampled decisions." },
+        { id: "Restriction precision", value: 94, tone: "green", text: "Hard blocks align with policy expectations across local-only cases." },
+        { id: "Question recall", value: 68, tone: "warn", text: "Missed two blast-radius questions in reversible deployment examples." },
+        { id: "Explanation completeness", value: 88, tone: "green", text: "Most inspected outcomes cite policy, axis, and evidence chain." }
+      ],
+      decisions: [
+        {
+          id: "DEC-042",
+          title: "[[Decision:ReleaseCandidate-0.9.8]]",
+          outcome: "Hold",
+          className: "hold",
+          confidence: 74,
+          policy: "[[Policy:EvidenceBeforeAction]]",
+          restriction: "[[Restriction:NoNetworkRuntime]]",
+          latency: "18 ms",
+          score: 74,
+          summary: "Hold the packaged UI refresh until the local fixture path and screenshot-free visual evidence are available.",
+          reasons: ["Evidence chain is missing a local artifact path.", "Network-free runtime requirement is binding.", "Rollback is possible but current explanation is incomplete."],
+          timeline: ["18:04 policy gate evaluated local-only requirement", "18:04 tradeoff frontier shifted safety above velocity", "18:05 question trigger emitted [[Question:EvidenceGap]]"]
+        },
+        {
+          id: "DEC-041",
+          title: "[[Decision:ShadowAutopilotCopy]]",
+          outcome: "Inspect",
+          className: "inspect",
+          confidence: 81,
+          policy: "[[Policy:TraceableReason]]",
+          restriction: "[[Restriction:ReadOnlySurface]]",
+          latency: "12 ms",
+          score: 81,
+          summary: "Keep shadow/autopilot language visible as state descriptors while removing any action affordance.",
+          reasons: ["Read-only UI can display mode state.", "Mutation verbs were absent in current fixture.", "Explanation quality passes threshold."],
+          timeline: ["17:48 scanned label set for mutation verbs", "17:48 checked cockpit state descriptors", "17:49 outcome moved to inspect"]
+        },
+        {
+          id: "DEC-040",
+          title: "[[Decision:TradeoffOverride]]",
+          outcome: "Block",
+          className: "block",
+          confidence: 89,
+          policy: "[[Policy:RestrictionFirst]]",
+          restriction: "[[Restriction:LocalFixturesOnly]]",
+          latency: "21 ms",
+          score: 89,
+          summary: "Block the sample that referenced an external provider trace instead of an embedded fixture.",
+          reasons: ["Fixture must be local.", "Restriction precedes model score.", "Provider trace would imply a remote dependency."],
+          timeline: ["16:11 found external trace reference", "16:11 applied hard restriction", "16:12 logged blocked outcome"]
+        },
+        {
+          id: "DEC-039",
+          title: "[[Decision:QuestionTriggerBudget]]",
+          outcome: "Pass",
+          className: "pass",
+          confidence: 86,
+          policy: "[[Policy:RollbackWeighted]]",
+          restriction: "[[Restriction:DaemonEmbeddable]]",
+          latency: "9 ms",
+          score: 86,
+          summary: "Accept four visible question triggers because they are inspectable facts, not runtime prompts.",
+          reasons: ["No mutation channel is introduced.", "The daemon can render static fixture values.", "Question count improves explainability."],
+          timeline: ["15:40 counted trigger rows", "15:40 verified no prompt submission field", "15:41 accepted as inspection surface"]
+        }
+      ]
+    };
+
+    const $ = (selector, root = document) => root.querySelector(selector);
+    const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+    let selectedDecisionId = "DEC-042";
+
+    function renderMetrics() {
+      const metrics = $(".metrics");
+      metrics.replaceChildren(...DATA.metrics.map((item) => {
+        const card = document.createElement("article");
+        card.className = "metric";
+        card.innerHTML = `<div class="label">${item.label}</div><strong>${item.value}</strong><small>${item.note}</small>`;
+        return card;
+      }));
+    }
+
+    function renderList(target, items, className) {
+      const root = $(target);
+      root.replaceChildren(...items.map((item) => {
+        const row = document.createElement("article");
+        row.className = className;
+        const badge = item.status || item.threshold || item.severity || `${item.value}%`;
+        row.innerHTML = `
+          <div class="row-head">
+            <span class="wiki">${item.id || item.name}</span>
+            <span class="chip">${badge}</span>
+          </div>
+          ${item.value ? `<div class="bar ${item.tone || ""}" style="--value: ${item.value}"><i></i></div>` : ""}
+          <p class="copy">${item.text}</p>`;
+        return row;
+      }));
+    }
+
+    function renderTradeoffPlot() {
+      const points = [
+        [62, 188, "var(--red)", "autonomy"],
+        [142, 138, "var(--amber)", "velocity"],
+        [278, 85, "var(--cyan)", "explainability"],
+        [408, 54, "var(--green)", "safety"]
+      ];
+      const plot = $("#tradeoffPlot");
+      plot.innerHTML = `
+        <path class="plot-band" d="M46 195 C130 150 198 127 268 96 C340 64 410 44 474 36 L474 94 C396 98 334 119 278 150 C204 190 129 207 46 218 Z"></path>
+        <path class="plot-axis" d="M46 214H486M46 214V28"></path>
+        <path class="plot-line" d="M58 194 C145 144 211 129 281 93 C352 56 419 43 472 38"></path>
+        ${points.map(([x, y, color, label]) => `<circle class="plot-point" cx="${x}" cy="${y}" r="7" fill="${color}"><title>${label}</title></circle>`).join("")}
+        <text x="46" y="235" fill="oklch(67% 0.025 232)" font-size="11" font-family="var(--font-mono)">velocity cost</text>
+        <text x="316" y="235" fill="oklch(67% 0.025 232)" font-size="11" font-family="var(--font-mono)">safety certainty</text>
+        <text x="18" y="32" fill="oklch(67% 0.025 232)" font-size="11" font-family="var(--font-mono)" transform="rotate(-90 18 32)">confidence</text>`;
+      renderList("#tradeoffList", DATA.tradeoffs, "calibration-row");
+    }
+
+    function renderDecisionRows() {
+      const rows = DATA.decisions.map((decision) => {
+        const tr = document.createElement("tr");
+        tr.dataset.id = decision.id;
+        if (decision.id === selectedDecisionId) tr.classList.add("selected");
+        tr.innerHTML = `
+          <td><button class="decision-button" type="button">${decision.title}</button></td>
+          <td><span class="outcome ${decision.className}">${decision.outcome}</span></td>
+          <td class="mono">${decision.confidence}%</td>
+          <td><span class="wiki">${decision.policy}</span></td>
+          <td><span class="wiki">${decision.restriction}</span></td>
+          <td class="mono">${decision.latency}</td>`;
+        $(".decision-button", tr).addEventListener("click", () => selectDecision(decision.id));
+        return tr;
+      });
+      $("#decisionRows").replaceChildren(...rows);
+    }
+
+    function renderInspector() {
+      const decision = DATA.decisions.find((item) => item.id === selectedDecisionId) || DATA.decisions[0];
+      $("#inspectorHeading").textContent = decision.id;
+      $("#inspectorBody").innerHTML = `
+        <section class="inspector-title">
+          <span class="wiki">${decision.title}</span>
+          <p class="copy">${decision.summary}</p>
+        </section>
+        <div class="score-ring" style="--score: ${decision.score}"><span>${decision.score}</span></div>
+        <section class="stack">
+          <div class="kv"><span class="label">outcome</span><span class="outcome ${decision.className}">${decision.outcome}</span></div>
+          <div class="kv"><span class="label">confidence</span><span class="mono">${decision.confidence}%</span></div>
+          <div class="kv"><span class="label">policy</span><span class="wiki">${decision.policy}</span></div>
+          <div class="kv"><span class="label">restriction</span><span class="wiki">${decision.restriction}</span></div>
+          <div class="kv"><span class="label">latency</span><span class="mono">${decision.latency}</span></div>
+          <div class="kv"><span class="label">reasons</span><span>${decision.reasons.map((reason) => `<span class="copy">${reason}</span>`).join("<br>")}</span></div>
+        </section>
+        <section style="margin-top: 18px;">
+          <div class="eyebrow">trace</div>
+          <div class="timeline">${decision.timeline.map((item) => `<div class="timeline-item">${item}</div>`).join("")}</div>
+        </section>`;
+      $$("#decisionRows tr").forEach((row) => row.classList.toggle("selected", row.dataset.id === decision.id));
+    }
+
+    function selectDecision(id) {
+      selectedDecisionId = id;
+      renderInspector();
+    }
+
+    function initDecisionField() {
+      const canvas = $("#decisionField");
+      const status = $("#rendererStatus");
+      const nodes = [
+        [-0.76, 0.42, 0.9], [-0.48, 0.28, 0.62], [-0.18, 0.48, 0.7], [0.18, 0.22, 0.56],
+        [0.52, 0.36, 0.82], [0.72, 0.0, 0.48], [0.36, -0.26, 0.64], [-0.08, -0.36, 0.58],
+        [-0.42, -0.2, 0.72], [-0.68, -0.48, 0.45], [0.58, -0.55, 0.68]
+      ];
+      const links = [[0,1],[1,2],[2,3],[3,4],[4,5],[3,6],[6,7],[7,8],[8,1],[8,9],[6,10],[2,7],[5,10]];
+      const gl = canvas.getContext("webgl2", { antialias: true, alpha: true });
+      if (!gl) {
+        status.textContent = "2d canvas fallback";
+        renderCanvasFallback(canvas, nodes, links);
+        return;
+      }
+
+      status.textContent = "webgl2 local renderer";
+      const vertexSource = `#version 300 es
+        in vec2 a_position;
+        in float a_weight;
+        uniform float u_time;
+        out float v_weight;
+        void main() {
+          vec2 drift = vec2(sin(u_time * 0.6 + a_position.y * 4.0) * 0.004, cos(u_time * 0.5 + a_position.x * 5.0) * 0.003);
+          gl_Position = vec4(a_position + drift, 0.0, 1.0);
+          gl_PointSize = 5.0 + a_weight * 9.0;
+          v_weight = a_weight;
+        }`;
+      const fragmentSource = `#version 300 es
+        precision highp float;
+        uniform vec4 u_color;
+        uniform int u_mode;
+        in float v_weight;
+        out vec4 outColor;
+        void main() {
+          float alpha = u_color.a;
+          if (u_mode == 1) {
+            float core = 1.0 - smoothstep(0.12, 0.5, distance(gl_PointCoord, vec2(0.5)));
+            alpha *= core;
+          }
+          outColor = vec4(u_color.rgb, alpha * (0.65 + v_weight * 0.35));
+        }`;
+
+      const program = createProgram(gl, vertexSource, fragmentSource);
+      const attrs = {
+        position: gl.getAttribLocation(program, "a_position"),
+        weight: gl.getAttribLocation(program, "a_weight"),
+        time: gl.getUniformLocation(program, "u_time"),
+        color: gl.getUniformLocation(program, "u_color"),
+        mode: gl.getUniformLocation(program, "u_mode")
+      };
+      const nodeBuffer = createBuffer(gl, nodes.flat());
+      const lineBuffer = createBuffer(gl, links.flatMap(([a, b]) => [...nodes[a], ...nodes[b]]));
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+
+      function drawBuffer(buffer, count, mode, color, pointMode, time) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.enableVertexAttribArray(attrs.position);
+        gl.vertexAttribPointer(attrs.position, 2, gl.FLOAT, false, 12, 0);
+        gl.enableVertexAttribArray(attrs.weight);
+        gl.vertexAttribPointer(attrs.weight, 1, gl.FLOAT, false, 12, 8);
+        gl.uniform1f(attrs.time, time);
+        gl.uniform4fv(attrs.color, color);
+        gl.uniform1i(attrs.mode, pointMode);
+        gl.drawArrays(mode, 0, count);
+      }
+
+      function frame(now) {
+        resizeCanvas(canvas, gl);
+        gl.clearColor(0, 0, 0, 0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.useProgram(program);
+        const t = now * 0.001;
+        drawBuffer(lineBuffer, links.length * 2, gl.LINES, [0.36, 0.84, 0.9, 0.18], 0, t);
+        drawBuffer(nodeBuffer, nodes.length, gl.POINTS, [0.45, 0.95, 0.86, 0.78], 1, t);
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    }
+
+    function renderCanvasFallback(canvas, nodes, links) {
+      const ctx = canvas.getContext("2d");
+      function frame(now) {
+        const dpr = resize2dCanvas(canvas);
+        const w = canvas.width / dpr;
+        const h = canvas.height / dpr;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, w, h);
+        ctx.globalCompositeOperation = "lighter";
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = "rgba(86, 214, 226, 0.18)";
+        links.forEach(([a, b]) => {
+          const p1 = toCanvas(nodes[a], w, h, now);
+          const p2 = toCanvas(nodes[b], w, h, now);
+          ctx.beginPath();
+          ctx.moveTo(p1.x, p1.y);
+          ctx.lineTo(p2.x, p2.y);
+          ctx.stroke();
+        });
+        nodes.forEach((node) => {
+          const p = toCanvas(node, w, h, now);
+          const r = 4 + node[2] * 8;
+          const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r * 2.8);
+          g.addColorStop(0, "rgba(132, 255, 231, 0.82)");
+          g.addColorStop(1, "rgba(132, 255, 231, 0)");
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, r * 2.8, 0, Math.PI * 2);
+          ctx.fill();
+        });
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    }
+
+    function toCanvas(node, width, height, now) {
+      const driftX = Math.sin(now * 0.0006 + node[1] * 4) * 2;
+      const driftY = Math.cos(now * 0.0005 + node[0] * 5) * 1.6;
+      return {
+        x: (node[0] * 0.5 + 0.5) * width + driftX,
+        y: (-node[1] * 0.5 + 0.5) * height + driftY
+      };
+    }
+
+    function resizeCanvas(canvas, gl) {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const rect = canvas.getBoundingClientRect();
+      const width = Math.max(1, Math.floor(rect.width * dpr));
+      const height = Math.max(1, Math.floor(rect.height * dpr));
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+        gl.viewport(0, 0, width, height);
+      }
+    }
+
+    function resize2dCanvas(canvas) {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const rect = canvas.getBoundingClientRect();
+      const width = Math.max(1, Math.floor(rect.width * dpr));
+      const height = Math.max(1, Math.floor(rect.height * dpr));
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
+      return dpr;
+    }
+
+    function createBuffer(gl, values) {
+      const buffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(values), gl.STATIC_DRAW);
+      return buffer;
+    }
+
+    function createProgram(gl, vertexSource, fragmentSource) {
+      const program = gl.createProgram();
+      gl.attachShader(program, compileShader(gl, gl.VERTEX_SHADER, vertexSource));
+      gl.attachShader(program, compileShader(gl, gl.FRAGMENT_SHADER, fragmentSource));
+      gl.linkProgram(program);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        throw new Error(gl.getProgramInfoLog(program) || "Unable to link WebGL program");
+      }
+      return program;
+    }
+
+    function compileShader(gl, type, source) {
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        throw new Error(gl.getShaderInfoLog(shader) || "Unable to compile WebGL shader");
+      }
+      return shader;
+    }
+
+    renderMetrics();
+    renderList("#policyList", DATA.policies, "policy-row");
+    renderList("#triggerList", DATA.triggers, "trigger-row");
+    renderList("#restrictionList", DATA.restrictions, "restriction-row");
+    renderList("#calibrationList", DATA.calibration, "calibration-row");
+    renderTradeoffPlot();
+    renderDecisionRows();
+    renderInspector();
+    initDecisionField();
+  </script>
+</body>
+</html>
