@@ -15,6 +15,6 @@ mod privacy;
 mod snapshot;
 mod util;
 mod vault;
-mod web;
+pub mod web;
 
 pub use cli::run;
