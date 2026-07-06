@@ -839,7 +839,7 @@
 </head>
 <body>
   <div class="app">
-    <aside class="sidebar">
+    <aside class="sidebar" aria-label="Application navigation">
       <div class="brand" aria-label="Brainmap">
         <div class="brand-mark">BM</div>
         <div>
@@ -869,9 +869,9 @@
         <p class="subhead">Inspect decisions, tradeoff models, calibration drift, question triggers, and binding restrictions without exposing any mutation path.</p>
       </div>
       <div class="status-strip" aria-label="Runtime status">
-        <span class="status">Local store mounted</span>
-        <span class="status warn">4 pending questions</span>
-        <span class="status stop">1 hard restriction</span>
+        <span class="status" id="indexStatus">Local store</span>
+        <span class="status warn" id="questionStatus">0 pending questions</span>
+        <span class="status stop" id="restrictionStatus">0 hard restrictions</span>
       </div>
     </header>
 
@@ -887,7 +887,7 @@
             </div>
             <span class="chip" id="rendererStatus">renderer initializing</span>
           </div>
-          <canvas class="map-canvas" id="decisionField" aria-hidden="true"></canvas>
+          <canvas class="map-canvas" id="decisionField"></canvas>
           <div class="map-scan" aria-hidden="true"></div>
           <svg class="brain-atlas" viewBox="0 0 760 460" role="img" aria-label="Brainmap atlas with policy regions and decision links">
             <path class="atlas-shell" d="M143 259c-37-25-53-72-34-118 16-40 52-67 101-78 28-38 92-48 135-22 31-13 77-4 101 22 53-1 99 34 103 84 43 12 70 50 61 91-10 45-54 71-107 64-27 31-80 44-127 28-37 27-99 28-137-2-37 7-70-8-96-69Z"/>
@@ -908,10 +908,10 @@
             <text class="brain-label muted" x="408" y="291">calibration</text>
             <text class="brain-label" x="498" y="366">examples</text>
           </svg>
-          <div class="map-tag" style="--x: 20%; --y: 34%;"><b>82%</b><br>policy coverage</div>
+          <div class="map-tag" id="coverageTag" style="--x: 20%; --y: 34%;"><b>0%</b><br>policy coverage</div>
           <div class="map-tag" style="--x: 58%; --y: 45%;">[[Model:TradeoffFrontier]]</div>
-          <div class="map-tag" style="--x: 78%; --y: 62%;"><b>DEC-042</b><br>release hold</div>
-          <div class="map-tag" style="--x: 39%; --y: 73%;">[[Question:EvidenceGap]]</div>
+          <div class="map-tag" id="decisionTag" style="--x: 78%; --y: 62%;"><b>0</b><br>decisions</div>
+          <div class="map-tag" id="questionTag" style="--x: 39%; --y: 73%;">0 question triggers</div>
         </section>
 
         <section class="panel tradeoff-panel" aria-label="Tradeoff graph">
@@ -936,7 +936,7 @@
               <div class="eyebrow">binding policies</div>
               <h2>Policy surface</h2>
             </div>
-            <span class="chip">6 active</span>
+            <span class="chip" id="policyCount">0 active</span>
           </div>
           <div class="panel-body stack" id="policyList"></div>
         </section>
@@ -947,7 +947,7 @@
               <div class="eyebrow">question triggers</div>
               <h2>Required clarifications</h2>
             </div>
-            <span class="chip">read only</span>
+            <span class="chip" id="triggerCount">0 triggers</span>
           </div>
           <div class="panel-body stack" id="triggerList"></div>
         </section>
@@ -960,7 +960,7 @@
               <div class="eyebrow">restriction ledger</div>
               <h2>Hard limits</h2>
             </div>
-            <span class="chip">local fixture</span>
+            <span class="chip" id="restrictionCount">0 restrictions</span>
           </div>
           <div class="panel-body stack" id="restrictionList"></div>
         </section>
@@ -971,7 +971,7 @@
               <div class="eyebrow">model health</div>
               <h2>Calibration drift</h2>
             </div>
-            <span class="chip">last 24h</span>
+            <span class="chip" id="calibrationCount">ledger</span>
           </div>
           <div class="panel-body stack" id="calibrationList"></div>
         </section>
@@ -1013,132 +1013,119 @@
   </div>
 
   <script>
-    const DATA = {
-      metrics: [
-        { label: "Policy coverage", value: "82%", note: "31 of 38 observed branches resolve without external context" },
-        { label: "Calibration error", value: "0.12", note: "Brier drift across shadow decisions, trailing 24h" },
-        { label: "Hard blocks", value: "14", note: "Restrictions prevented unsafe or non-local outcomes" },
-        { label: "Question debt", value: "4", note: "Clarifications required before confident resolution" }
-      ],
-      tradeoffs: [
-        { name: "[[Axis:Safety]]", value: 91, tone: "green", text: "Dominates when evidence source, locality, or rollback certainty is weak." },
-        { name: "[[Axis:Velocity]]", value: 54, tone: "warn", text: "Permitted only inside reversible, low-blast-radius decisions." },
-        { name: "[[Axis:Autonomy]]", value: 33, tone: "danger", text: "Suppressed by read-only runtime and local-first restrictions." },
-        { name: "[[Axis:Explainability]]", value: 87, tone: "green", text: "Requires visible policy references and traceable question triggers." }
-      ],
-      policies: [
-        { id: "[[Policy:LocalOnly]]", status: "binding", text: "Reject decisions that require remote fetches, hosted telemetry, identity handoffs, or provider callbacks." },
-        { id: "[[Policy:EvidenceBeforeAction]]", status: "binding", text: "When evidence confidence falls below 0.72, downgrade outcome to inspect or ask a question." },
-        { id: "[[Policy:RollbackWeighted]]", status: "active", text: "Favor reversible steps unless the decision has a clear safety improvement and a named owner." },
-        { id: "[[Policy:SingleUserDaemon]]", status: "active", text: "Assume Linux local single-user operation; hide tenancy, billing, and shared workspace primitives." },
-        { id: "[[Policy:RestrictionFirst]]", status: "binding", text: "Evaluate hard restrictions before tradeoff scoring so blocked paths never look merely low priority." },
-        { id: "[[Policy:TraceableReason]]", status: "active", text: "Each outcome must cite at least one policy, one model axis, and one fixture or observed example." }
-      ],
-      triggers: [
-        { id: "[[Question:EvidenceGap]]", threshold: "< 0.72", text: "Ask for source, timestamp, or local artifact path when the evidence chain is incomplete." },
-        { id: "[[Question:BlastRadius]]", threshold: "> medium", text: "Ask which daemon surface, file path, or runtime namespace is affected before approving a path." },
-        { id: "[[Question:PolicyConflict]]", threshold: "2+ policies", text: "Ask the operator to choose the governing policy when safety and velocity scores tie." },
-        { id: "[[Question:HumanOverride]]", threshold: "manual note", text: "Show override context as an inspection fact, not as an editable control." }
-      ],
-      restrictions: [
-        { id: "[[Restriction:NoNetworkRuntime]]", severity: "hard", text: "Runtime UI cannot initiate network requests, remote measurement beacons, remote assets, or provider calls." },
-        { id: "[[Restriction:ReadOnlySurface]]", severity: "hard", text: "Frontend may inspect decisions and policies but must not expose create, update, delete, approve, or retry affordances." },
-        { id: "[[Restriction:LocalFixturesOnly]]", severity: "hard", text: "Demo data is embedded in the artifact and must not imply remote synchronization." },
-        { id: "[[Restriction:DaemonEmbeddable]]", severity: "guard", text: "Keep the artifact static and bundler-friendly for later Rust daemon embedding." }
-      ],
-      calibration: [
-        { id: "Shadow agreement", value: 76, tone: "warn", text: "Production and shadow outcomes agree on 19 of 25 sampled decisions." },
-        { id: "Restriction precision", value: 94, tone: "green", text: "Hard blocks align with policy expectations across local-only cases." },
-        { id: "Question recall", value: 68, tone: "warn", text: "Missed two blast-radius questions in reversible deployment examples." },
-        { id: "Explanation completeness", value: 88, tone: "green", text: "Most inspected outcomes cite policy, axis, and evidence chain." }
-      ],
-      decisions: [
-        {
-          id: "DEC-042",
-          title: "[[Decision:ReleaseCandidate-0.9.8]]",
-          outcome: "Hold",
-          className: "hold",
-          confidence: 74,
-          policy: "[[Policy:EvidenceBeforeAction]]",
-          restriction: "[[Restriction:NoNetworkRuntime]]",
-          latency: "18 ms",
-          score: 74,
-          summary: "Hold the packaged UI refresh until the local fixture path and screenshot-free visual evidence are available.",
-          reasons: ["Evidence chain is missing a local artifact path.", "Network-free runtime requirement is binding.", "Rollback is possible but current explanation is incomplete."],
-          timeline: ["18:04 policy gate evaluated local-only requirement", "18:04 tradeoff frontier shifted safety above velocity", "18:05 question trigger emitted [[Question:EvidenceGap]]"]
-        },
-        {
-          id: "DEC-041",
-          title: "[[Decision:ShadowAutopilotCopy]]",
-          outcome: "Inspect",
-          className: "inspect",
-          confidence: 81,
-          policy: "[[Policy:TraceableReason]]",
-          restriction: "[[Restriction:ReadOnlySurface]]",
-          latency: "12 ms",
-          score: 81,
-          summary: "Keep shadow/autopilot language visible as state descriptors while removing any action affordance.",
-          reasons: ["Read-only UI can display mode state.", "Mutation verbs were absent in current fixture.", "Explanation quality passes threshold."],
-          timeline: ["17:48 scanned label set for mutation verbs", "17:48 checked cockpit state descriptors", "17:49 outcome moved to inspect"]
-        },
-        {
-          id: "DEC-040",
-          title: "[[Decision:TradeoffOverride]]",
-          outcome: "Block",
-          className: "block",
-          confidence: 89,
-          policy: "[[Policy:RestrictionFirst]]",
-          restriction: "[[Restriction:LocalFixturesOnly]]",
-          latency: "21 ms",
-          score: 89,
-          summary: "Block the sample that referenced an external provider trace instead of an embedded fixture.",
-          reasons: ["Fixture must be local.", "Restriction precedes model score.", "Provider trace would imply a remote dependency."],
-          timeline: ["16:11 found external trace reference", "16:11 applied hard restriction", "16:12 logged blocked outcome"]
-        },
-        {
-          id: "DEC-039",
-          title: "[[Decision:QuestionTriggerBudget]]",
-          outcome: "Pass",
-          className: "pass",
-          confidence: 86,
-          policy: "[[Policy:RollbackWeighted]]",
-          restriction: "[[Restriction:DaemonEmbeddable]]",
-          latency: "9 ms",
-          score: 86,
-          summary: "Accept four visible question triggers because they are inspectable facts, not runtime prompts.",
-          reasons: ["No mutation channel is introduced.", "The daemon can render static fixture values.", "Question count improves explainability."],
-          timeline: ["15:40 counted trigger rows", "15:40 verified no prompt submission field", "15:41 accepted as inspection surface"]
-        }
-      ]
-    };
-
     const $ = (selector, root = document) => root.querySelector(selector);
     const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
-    let selectedDecisionId = "DEC-042";
+    let DATA = emptyData();
+    let selectedDecisionId = null;
+
+    function emptyData() {
+      return {
+        status: [],
+        metrics: [],
+        tradeoffs: [],
+        policies: [],
+        triggers: [],
+        restrictions: [],
+        calibration: [],
+        decisions: [],
+        counts: { policies: 0, triggers: 0, restrictions: 0, decisions: 0, coverage: 0 },
+        insights: {}
+      };
+    }
+
+    async function loadData() {
+      for (const url of ["/api/ui", "data.json"]) {
+        try {
+          const res = await fetch(url, { cache: "no-store" });
+          if (!res.ok) continue;
+          DATA = normalizeData(await res.json());
+          selectedDecisionId = DATA.decisions[0]?.id || null;
+          return;
+        } catch {
+          // Static export tries data.json after /api/ui.
+        }
+      }
+      DATA = emptyData();
+    }
+
+    function normalizeData(data) {
+      const base = emptyData();
+      return {
+        ...base,
+        ...data,
+        metrics: Array.isArray(data?.metrics) ? data.metrics : [],
+        tradeoffs: Array.isArray(data?.tradeoffs) ? data.tradeoffs : [],
+        policies: Array.isArray(data?.policies) ? data.policies : [],
+        triggers: Array.isArray(data?.triggers) ? data.triggers : [],
+        restrictions: Array.isArray(data?.restrictions) ? data.restrictions : [],
+        calibration: Array.isArray(data?.calibration) ? data.calibration : [],
+        decisions: Array.isArray(data?.decisions) ? data.decisions : [],
+        counts: { ...base.counts, ...(data?.counts || {}) }
+      };
+    }
+
+    function esc(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+      }[ch]));
+    }
+
+    function pct(value) {
+      const n = Number(value);
+      return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 0;
+    }
+
+    function outcomeClass(value) {
+      return ["pass", "hold", "block", "inspect"].includes(value) ? value : "inspect";
+    }
+
+    function renderRuntime() {
+      $("#indexStatus").textContent = DATA.status[0] || "Local index unknown";
+      $("#questionStatus").textContent = `${DATA.counts.triggers} question triggers`;
+      $("#restrictionStatus").textContent = `${DATA.counts.restrictions} restrictions`;
+      $("#coverageTag").innerHTML = `<b>${pct(DATA.counts.coverage)}%</b><br>policy coverage`;
+      $("#decisionTag").innerHTML = `<b>${DATA.counts.decisions}</b><br>decisions`;
+      $("#questionTag").textContent = `${DATA.counts.triggers} question triggers`;
+      $("#policyCount").textContent = `${DATA.counts.policies} active`;
+      $("#triggerCount").textContent = `${DATA.counts.triggers} triggers`;
+      $("#restrictionCount").textContent = `${DATA.counts.restrictions} restrictions`;
+      $("#calibrationCount").textContent = `${DATA.calibration.length} checks`;
+    }
 
     function renderMetrics() {
       const metrics = $(".metrics");
       metrics.replaceChildren(...DATA.metrics.map((item) => {
         const card = document.createElement("article");
         card.className = "metric";
-        card.innerHTML = `<div class="label">${item.label}</div><strong>${item.value}</strong><small>${item.note}</small>`;
+        card.innerHTML = `<div class="label">${esc(item.label)}</div><strong>${esc(item.value)}</strong><small>${esc(item.note)}</small>`;
         return card;
       }));
     }
 
     function renderList(target, items, className) {
       const root = $(target);
+      if (!items.length) {
+        const empty = document.createElement("article");
+        empty.className = className;
+        empty.innerHTML = `<p class="copy">No records found in the local Brainmap vault.</p>`;
+        root.replaceChildren(empty);
+        return;
+      }
       root.replaceChildren(...items.map((item) => {
         const row = document.createElement("article");
         row.className = className;
         const badge = item.status || item.threshold || item.severity || `${item.value}%`;
         row.innerHTML = `
           <div class="row-head">
-            <span class="wiki">${item.id || item.name}</span>
-            <span class="chip">${badge}</span>
+            <span class="wiki">${esc(item.id || item.name)}</span>
+            <span class="chip">${esc(badge)}</span>
           </div>
-          ${item.value ? `<div class="bar ${item.tone || ""}" style="--value: ${item.value}"><i></i></div>` : ""}
-          <p class="copy">${item.text}</p>`;
+          ${item.value ? `<div class="bar ${esc(item.tone || "")}" style="--value: ${pct(item.value)}"><i></i></div>` : ""}
+          <p class="copy">${esc(item.text)}</p>`;
         return row;
       }));
     }
@@ -1163,17 +1150,24 @@
     }
 
     function renderDecisionRows() {
+      if (!DATA.decisions.length) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td colspan="6">No decision ledger entries found.</td>`;
+        $("#decisionRows").replaceChildren(tr);
+        return;
+      }
       const rows = DATA.decisions.map((decision) => {
         const tr = document.createElement("tr");
         tr.dataset.id = decision.id;
         if (decision.id === selectedDecisionId) tr.classList.add("selected");
+        const className = outcomeClass(decision.className);
         tr.innerHTML = `
-          <td><button class="decision-button" type="button">${decision.title}</button></td>
-          <td><span class="outcome ${decision.className}">${decision.outcome}</span></td>
-          <td class="mono">${decision.confidence}%</td>
-          <td><span class="wiki">${decision.policy}</span></td>
-          <td><span class="wiki">${decision.restriction}</span></td>
-          <td class="mono">${decision.latency}</td>`;
+          <td><button class="decision-button" type="button">${esc(decision.title)}</button></td>
+          <td><span class="outcome ${className}">${esc(decision.outcome)}</span></td>
+          <td class="mono">${pct(decision.confidence)}%</td>
+          <td><span class="wiki">${esc(decision.policy)}</span></td>
+          <td><span class="wiki">${esc(decision.restriction)}</span></td>
+          <td class="mono">${esc(decision.latency)}</td>`;
         $(".decision-button", tr).addEventListener("click", () => selectDecision(decision.id));
         return tr;
       });
@@ -1182,24 +1176,30 @@
 
     function renderInspector() {
       const decision = DATA.decisions.find((item) => item.id === selectedDecisionId) || DATA.decisions[0];
-      $("#inspectorHeading").textContent = decision.id;
+      if (!decision) {
+        $("#inspectorHeading").textContent = "No decisions";
+        $("#inspectorBody").innerHTML = `<p class="copy">Run Brainmap gates to append local decision events.</p>`;
+        return;
+      }
+      const className = outcomeClass(decision.className);
+      $("#inspectorHeading").textContent = decision.id || "Decision";
       $("#inspectorBody").innerHTML = `
         <section class="inspector-title">
-          <span class="wiki">${decision.title}</span>
-          <p class="copy">${decision.summary}</p>
+          <span class="wiki">${esc(decision.title)}</span>
+          <p class="copy">${esc(decision.summary)}</p>
         </section>
-        <div class="score-ring" style="--score: ${decision.score}"><span>${decision.score}</span></div>
+        <div class="score-ring" style="--score: ${pct(decision.score)}"><span>${pct(decision.score)}</span></div>
         <section class="stack">
-          <div class="kv"><span class="label">outcome</span><span class="outcome ${decision.className}">${decision.outcome}</span></div>
-          <div class="kv"><span class="label">confidence</span><span class="mono">${decision.confidence}%</span></div>
-          <div class="kv"><span class="label">policy</span><span class="wiki">${decision.policy}</span></div>
-          <div class="kv"><span class="label">restriction</span><span class="wiki">${decision.restriction}</span></div>
-          <div class="kv"><span class="label">latency</span><span class="mono">${decision.latency}</span></div>
-          <div class="kv"><span class="label">reasons</span><span>${decision.reasons.map((reason) => `<span class="copy">${reason}</span>`).join("<br>")}</span></div>
+          <div class="kv"><span class="label">outcome</span><span class="outcome ${className}">${esc(decision.outcome)}</span></div>
+          <div class="kv"><span class="label">confidence</span><span class="mono">${pct(decision.confidence)}%</span></div>
+          <div class="kv"><span class="label">policy</span><span class="wiki">${esc(decision.policy)}</span></div>
+          <div class="kv"><span class="label">restriction</span><span class="wiki">${esc(decision.restriction)}</span></div>
+          <div class="kv"><span class="label">latency</span><span class="mono">${esc(decision.latency)}</span></div>
+          <div class="kv"><span class="label">reasons</span><span>${(decision.reasons || []).map((reason) => `<span class="copy">${esc(reason)}</span>`).join("<br>")}</span></div>
         </section>
         <section style="margin-top: 18px;">
           <div class="eyebrow">trace</div>
-          <div class="timeline">${decision.timeline.map((item) => `<div class="timeline-item">${item}</div>`).join("")}</div>
+          <div class="timeline">${(decision.timeline || []).map((item) => `<div class="timeline-item">${esc(item)}</div>`).join("")}</div>
         </section>`;
       $$("#decisionRows tr").forEach((row) => row.classList.toggle("selected", row.dataset.id === decision.id));
     }
@@ -1386,15 +1386,21 @@
       return shader;
     }
 
-    renderMetrics();
-    renderList("#policyList", DATA.policies, "policy-row");
-    renderList("#triggerList", DATA.triggers, "trigger-row");
-    renderList("#restrictionList", DATA.restrictions, "restriction-row");
-    renderList("#calibrationList", DATA.calibration, "calibration-row");
-    renderTradeoffPlot();
-    renderDecisionRows();
-    renderInspector();
-    initDecisionField();
+    async function init() {
+      await loadData();
+      renderRuntime();
+      renderMetrics();
+      renderList("#policyList", DATA.policies, "policy-row");
+      renderList("#triggerList", DATA.triggers, "trigger-row");
+      renderList("#restrictionList", DATA.restrictions, "restriction-row");
+      renderList("#calibrationList", DATA.calibration, "calibration-row");
+      renderTradeoffPlot();
+      renderDecisionRows();
+      renderInspector();
+      initDecisionField();
+    }
+
+    init();
   </script>
 </body>
 </html>
