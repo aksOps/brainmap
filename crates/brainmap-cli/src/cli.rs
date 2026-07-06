@@ -495,6 +495,7 @@ struct HarnessArgs {
 #[derive(Subcommand)]
 enum HarnessCommand {
     Stdio(harness::StdioArgs),
+    Hook(harness::HookArgs),
 }
 
 #[derive(Args)]
@@ -638,6 +639,7 @@ pub fn run() -> Result<()> {
         },
         Command::Harness(args) => match args.command {
             HarnessCommand::Stdio(args) => harness::stdio(args),
+            HarnessCommand::Hook(args) => harness::hook(args),
         },
         Command::Install(args) => match args.command {
             InstallCommand::Harness(args) => install::install_harness(args),

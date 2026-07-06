@@ -1,5 +1,6 @@
 /target/
 /tmp/
+/dist/
 **/.brainmap/brainmap.sqlite
 **/.brainmap/locks/
 **/.brainmap/web-cache/
