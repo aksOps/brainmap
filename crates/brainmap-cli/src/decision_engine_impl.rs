@@ -312,7 +312,7 @@ pub(crate) fn evaluate_internal(root: &Path, input: GateInput) -> Result<GateRes
                     .map(|option| privacy::redact(option))
                     .collect::<Vec<_>>(),
                 "proposedAction": privacy::redact(&input.proposed_action),
-                "risk": input.risk,
+                "risk": privacy::redact(&input.risk),
                 "reversible": input.reversible,
                 "decisionType": privacy::redact(&input.decision_type),
                 "scope": privacy::redact(&input.scope),

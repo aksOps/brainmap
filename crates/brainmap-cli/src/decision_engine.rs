@@ -60,11 +60,12 @@ pub struct DecisionRequest {
 impl DecisionRequest {
     pub(crate) fn combined(&self) -> String {
         format!(
-            "{} {} {} {} {} {}",
+            "{} {} {} {} {} {} {}",
             self.intent,
             self.situation,
             self.options.join(" "),
             self.proposed_action,
+            self.risk,
             self.decision_type,
             self.scope
         )

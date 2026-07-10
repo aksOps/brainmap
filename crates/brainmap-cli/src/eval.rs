@@ -6,7 +6,26 @@ use serde_json::json;
 use std::fs;
 use std::path::PathBuf;
 
+#[derive(Debug, Default, PartialEq, Eq)]
+enum ExpectedChoice {
+    #[default]
+    Unspecified,
+    NoSelection,
+    Selection(String),
+}
+
+fn deserialize_expected_choice<'de, D>(deserializer: D) -> Result<ExpectedChoice, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(match Option::<String>::deserialize(deserializer)? {
+        Some(choice) => ExpectedChoice::Selection(choice),
+        None => ExpectedChoice::NoSelection,
+    })
+}
+
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Case {
     id: String,
     #[serde(default)]
@@ -23,12 +42,26 @@ struct Case {
     proposed_action: Option<String>,
     #[serde(rename = "expectedOutcome")]
     expected_outcome: String,
-    #[serde(rename = "expectedChoice")]
-    expected_choice: Option<String>,
+    #[serde(
+        default,
+        rename = "expectedChoice",
+        deserialize_with = "deserialize_expected_choice"
+    )]
+    expected_choice: ExpectedChoice,
     #[serde(rename = "mustAskUser")]
     must_ask_user: Option<bool>,
     #[serde(default, rename = "expectedLearnedRule")]
     expected_learned_rule: Option<bool>,
+    #[serde(default, rename = "expectedCandidateCollision")]
+    expected_candidate_collision: Option<bool>,
+    #[serde(default, rename = "expectedMatchKind")]
+    expected_match_kind: Option<String>,
+    #[serde(default, rename = "minimumMatchMargin")]
+    minimum_match_margin: Option<f64>,
+    #[serde(default, rename = "maximumMatchMargin")]
+    maximum_match_margin: Option<f64>,
+    #[serde(default, rename = "maximumConfidence")]
+    maximum_confidence: Option<f64>,
     reason: Option<String>,
     setup: Option<CaseSetup>,
 }
@@ -54,7 +87,7 @@ struct NegativeCaseMatrix {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CaseSetup {
     gate_mode: Option<String>,
     autopilot_mode: Option<String>,
@@ -64,7 +97,12 @@ struct CaseSetup {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct EvalDecisionRule {
+    #[serde(default = "one_copy")]
+    copies: usize,
+    #[serde(default = "seed_status")]
+    status: String,
     #[serde(default)]
     situation: Option<String>,
     #[serde(default)]
@@ -77,6 +115,14 @@ struct EvalDecisionRule {
     #[serde(default)]
     rejected: Vec<String>,
     classification: String,
+}
+
+fn one_copy() -> usize {
+    1
+}
+
+fn seed_status() -> String {
+    "seed".into()
 }
 
 pub fn run(args: EvalArgs) -> Result<()> {
@@ -107,6 +153,11 @@ pub fn run(args: EvalArgs) -> Result<()> {
     let mut false_block = 0usize;
     let mut wrong_choice = 0usize;
     let mut wrong_rule = 0usize;
+    let mut wrong_metadata = 0usize;
+    let mut outcome_mismatches = Vec::new();
+    let mut choice_mismatches = Vec::new();
+    let mut rule_mismatches = Vec::new();
+    let mut metadata_mismatches = Vec::new();
     let mut expected_asks = 0usize;
     let mut ids = Vec::new();
     let mut reasons = Vec::new();
@@ -155,6 +206,10 @@ pub fn run(args: EvalArgs) -> Result<()> {
             },
         )?;
         if res.outcome != case.expected_outcome {
+            outcome_mismatches.push(format!(
+                "{}: outcome expected {:?}, got {:?}",
+                case.id, case.expected_outcome, res.outcome
+            ));
             match res.outcome.as_str() {
                 "proceed" => false_proceed += 1,
                 "ask_user" => false_ask += 1,
@@ -162,10 +217,24 @@ pub fn run(args: EvalArgs) -> Result<()> {
                 _ => {}
             }
         }
-        if let Some(expected) = &case.expected_choice
-            && res.selected_option.as_ref() != Some(expected)
-        {
-            wrong_choice += 1;
+        match &case.expected_choice {
+            ExpectedChoice::Selection(expected)
+                if res.selected_option.as_ref() != Some(expected) =>
+            {
+                wrong_choice += 1;
+                choice_mismatches.push(format!(
+                    "{}: selectedOption expected {:?}, got {:?}",
+                    case.id, expected, res.selected_option
+                ));
+            }
+            ExpectedChoice::NoSelection if res.selected_option.is_some() => {
+                wrong_choice += 1;
+                choice_mismatches.push(format!(
+                    "{}: selectedOption expected null, got {:?}",
+                    case.id, res.selected_option
+                ));
+            }
+            _ => {}
         }
         if let Some(expected) = case.expected_learned_rule {
             let applied = res
@@ -174,6 +243,10 @@ pub fn run(args: EvalArgs) -> Result<()> {
                 .any(|path| path.contains("60-decision-examples/"));
             if applied != expected {
                 wrong_rule += 1;
+                rule_mismatches.push(format!(
+                    "{}: learned rule expected {expected}, got {applied}",
+                    case.id
+                ));
             }
             if expected {
                 let exact = case.setup.as_ref().is_some_and(|setup| {
@@ -193,6 +266,51 @@ pub fn run(args: EvalArgs) -> Result<()> {
                 negative_correct += usize::from(!applied);
             }
         }
+        if let Some(expected) = case.expected_candidate_collision
+            && res.candidate_collision != expected
+        {
+            wrong_metadata += 1;
+            metadata_mismatches.push(format!(
+                "{}: candidateCollision expected {expected}, got {}",
+                case.id, res.candidate_collision
+            ));
+        }
+        if let Some(expected) = &case.expected_match_kind
+            && res.match_kind.as_ref() != Some(expected)
+        {
+            wrong_metadata += 1;
+            metadata_mismatches.push(format!(
+                "{}: matchKind expected {expected:?}, got {:?}",
+                case.id, res.match_kind
+            ));
+        }
+        if let Some(minimum) = case.minimum_match_margin
+            && res.match_margin.is_none_or(|margin| margin < minimum)
+        {
+            wrong_metadata += 1;
+            metadata_mismatches.push(format!(
+                "{}: matchMargin expected >= {minimum}, got {:?}",
+                case.id, res.match_margin
+            ));
+        }
+        if let Some(maximum) = case.maximum_match_margin
+            && res.match_margin.is_none_or(|margin| margin > maximum)
+        {
+            wrong_metadata += 1;
+            metadata_mismatches.push(format!(
+                "{}: matchMargin expected <= {maximum}, got {:?}",
+                case.id, res.match_margin
+            ));
+        }
+        if let Some(maximum) = case.maximum_confidence
+            && res.confidence > maximum
+        {
+            wrong_metadata += 1;
+            metadata_mismatches.push(format!(
+                "{}: confidence expected <= {maximum}, got {}",
+                case.id, res.confidence
+            ));
+        }
     }
     let report = json!({
         "cases": cases.len(),
@@ -201,6 +319,11 @@ pub fn run(args: EvalArgs) -> Result<()> {
         "falseBlock": false_block,
         "wrongChoice": wrong_choice,
         "wrongRule": wrong_rule,
+        "wrongMetadata": wrong_metadata,
+        "outcomeMismatches": outcome_mismatches,
+        "choiceMismatches": choice_mismatches,
+        "ruleMismatches": rule_mismatches,
+        "metadataMismatches": metadata_mismatches,
         "learnedRuleRecall": {
             "exact": ratio(exact_correct, exact_expected),
             "exactCorrect": exact_correct,
@@ -220,7 +343,8 @@ pub fn run(args: EvalArgs) -> Result<()> {
         "reasons": reasons
     });
     println!("{}", serde_json::to_string_pretty(&report)?);
-    let failures = false_proceed + false_ask + false_block + wrong_choice + wrong_rule;
+    let failures =
+        false_proceed + false_ask + false_block + wrong_choice + wrong_rule + wrong_metadata;
     if failures > 0 {
         bail!(
             "evaluation contract failed with {failures} mismatched outcome, choice, or rule assertion(s)"
@@ -258,9 +382,14 @@ fn expand_negative_matrix(matrix: NegativeCaseMatrix) -> Result<Vec<Case>> {
                     scope: Some(scope.clone()),
                     proposed_action: None,
                     expected_outcome: "ask_user".into(),
-                    expected_choice: None,
+                    expected_choice: ExpectedChoice::NoSelection,
                     must_ask_user: Some(true),
                     expected_learned_rule: Some(false),
+                    expected_candidate_collision: None,
+                    expected_match_kind: None,
+                    minimum_match_margin: None,
+                    maximum_match_margin: None,
+                    maximum_confidence: None,
                     reason: Some(format!(
                         "{} must not leak into {operation}/{context}/{scope}",
                         matrix.source.chosen
@@ -292,32 +421,40 @@ fn prepare_case_vault(case: &Case, setup: &CaseSetup) -> Result<(tempfile::TempD
     let root = temp.path().join("BrainMap");
     fs::create_dir_all(root.join(".brainmap"))?;
     fs::create_dir_all(root.join("60-decision-examples"))?;
-    for (index, rule) in setup.learned_decisions.iter().enumerate() {
-        let id = format!("eval-{}-{index}", case.id);
-        let marker = markdown::decision_rule_marker(&markdown::DecisionRule {
-            situation: rule
-                .situation
-                .clone()
-                .unwrap_or_else(|| case.situation.clone()),
-            options: rule.options.clone().unwrap_or_else(|| case.options.clone()),
-            decision_type: rule
-                .decision_type
-                .clone()
-                .or_else(|| case.decision_type.clone()),
-            scope: rule.scope.clone().or_else(|| case.scope.clone()),
-            chosen: rule.chosen.clone(),
-            rejected: rule.rejected.clone(),
-        })?;
-        let body = format!(
-            "{}# Eval rule {}\n\n## Deterministic Rule\n\n{}\n",
-            markdown::frontmatter(&id, &rule.classification, "ask-before-action", "personal"),
-            case.id,
-            marker
-        );
-        util::write_atomic(
-            &root.join("60-decision-examples").join(format!("{id}.md")),
-            body.as_bytes(),
-        )?;
+    let mut compiled_index = 0usize;
+    for rule in &setup.learned_decisions {
+        if !(1..=256).contains(&rule.copies) {
+            bail!("eval learned decision copies must be between 1 and 256");
+        }
+        for _ in 0..rule.copies {
+            let id = format!("eval-{}-{compiled_index}", case.id);
+            compiled_index += 1;
+            let marker = markdown::decision_rule_marker(&markdown::DecisionRule {
+                situation: rule
+                    .situation
+                    .clone()
+                    .unwrap_or_else(|| case.situation.clone()),
+                options: rule.options.clone().unwrap_or_else(|| case.options.clone()),
+                decision_type: rule
+                    .decision_type
+                    .clone()
+                    .or_else(|| case.decision_type.clone()),
+                scope: rule.scope.clone().or_else(|| case.scope.clone()),
+                chosen: rule.chosen.clone(),
+                rejected: rule.rejected.clone(),
+            })?;
+            let frontmatter =
+                markdown::frontmatter(&id, &rule.classification, "ask-before-action", "personal")
+                    .replacen("status: seed", &format!("status: {}", rule.status), 1);
+            let body = format!(
+                "{}# Eval rule {}\n\n## Deterministic Rule\n\n{}\n",
+                frontmatter, case.id, marker
+            );
+            util::write_atomic(
+                &root.join("60-decision-examples").join(format!("{id}.md")),
+                body.as_bytes(),
+            )?;
+        }
     }
     if setup.autopilot_mode.is_some() || setup.threshold.is_some() {
         util::write_atomic(
@@ -335,4 +472,29 @@ fn prepare_case_vault(case: &Case, setup: &CaseSetup) -> Result<(tempfile::TempD
     }
     index::rebuild(&root)?;
     Ok((temp, root))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_case(expected_choice: &str) -> Case {
+        serde_json::from_str(&format!(
+            r#"{{"id":"choice-expectation","situation":"Choose safely","options":["A","B"],"risk":"low","reversible":true,"expectedOutcome":"ask_user","mustAskUser":true{expected_choice}}}"#
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn expected_choice_distinguishes_omitted_null_and_selected_values() {
+        assert_eq!(parse_case("").expected_choice, ExpectedChoice::Unspecified);
+        assert_eq!(
+            parse_case(r#", "expectedChoice":null"#).expected_choice,
+            ExpectedChoice::NoSelection
+        );
+        assert_eq!(
+            parse_case(r#", "expectedChoice":"A""#).expected_choice,
+            ExpectedChoice::Selection("A".into())
+        );
+    }
 }

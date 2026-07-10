@@ -8,7 +8,6 @@ use std::path::Path;
 use std::time::Instant;
 
 const SCALE_DIR: &str = "90-calibration/scale-bench";
-const MAX_SCALE: usize = 25_000;
 const GATE_WARMUP_ITERATIONS: usize = 10;
 const GATE_SAMPLE_ITERATIONS: usize = 200;
 
@@ -25,9 +24,10 @@ pub fn run(args: BenchArgs) -> Result<()> {
         None
     };
     let notes = indexed_note_count(&root)?;
-    let gate_request = || gate::GateInput {
+    let executable_rules = indexed_rule_count(&root)?;
+    let collision_request = || gate::GateInput {
         intent: "would-ask-user".into(),
-        situation: "Choose v1 storage".into(),
+        situation: "Pick benchmark storage local deterministic".into(),
         options: vec![
             "Markdown+JSONL".into(),
             "SQLite".into(),
@@ -41,13 +41,27 @@ pub fn run(args: BenchArgs) -> Result<()> {
         agent_confidence: None,
         dry_run: true,
     };
+    let unavailable_choice_request = || gate::GateInput {
+        intent: "would-ask-user".into(),
+        situation: "Pick formatter database benchmark fallback alpha beta gamma".into(),
+        options: vec!["rustfmt".into(), "dprint".into()],
+        proposed_action: String::new(),
+        risk: "low".into(),
+        reversible: Some(true),
+        decision_type: "architecture".into(),
+        scope: "global".into(),
+        agent_confidence: None,
+        dry_run: true,
+    };
+    let gate_probe = gate::evaluate(&root, collision_request())?;
+    let unavailable_choice_probe = gate::evaluate(&root, unavailable_choice_request())?;
     for _ in 0..GATE_WARMUP_ITERATIONS {
-        let _ = gate::evaluate(&root, gate_request())?;
+        let _ = gate::evaluate(&root, unavailable_choice_request())?;
     }
     let mut gate_samples_us = Vec::with_capacity(GATE_SAMPLE_ITERATIONS);
     for _ in 0..GATE_SAMPLE_ITERATIONS {
         let gate_start = Instant::now();
-        let _ = gate::evaluate(&root, gate_request())?;
+        let _ = gate::evaluate(&root, unavailable_choice_request())?;
         gate_samples_us.push(gate_start.elapsed().as_micros());
     }
     gate_samples_us.sort_unstable();
@@ -90,15 +104,27 @@ pub fn run(args: BenchArgs) -> Result<()> {
         serde_json::to_string_pretty(&json!({
             "vault": root,
             "scaleRequested": args.scale,
-            "scaleMax": MAX_SCALE,
+            "scaleMax": index::MAX_DECISION_RULES,
             "generatedUnder": args.scale.map(|_| SCALE_DIR),
             "notes": notes,
+            "executableRules": executable_rules,
             "indexRebuildMs": rebuild_ms,
             "gateMs": gate_p95_ms,
             "gateIterations": GATE_SAMPLE_ITERATIONS,
             "gateP50Ms": gate_p50_ms,
             "gateP95Ms": gate_p95_ms,
             "gateMaxMs": gate_max_ms,
+            "gateProbe": {
+                "outcome": gate_probe.outcome,
+                "matchKind": gate_probe.match_kind,
+                "candidateCollision": gate_probe.candidate_collision
+            },
+            "unavailableChoiceProbe": {
+                "outcome": unavailable_choice_probe.outcome,
+                "matchKind": unavailable_choice_probe.match_kind,
+                "candidateCollision": unavailable_choice_probe.candidate_collision,
+                "matchedPolicies": unavailable_choice_probe.matched_policies
+            },
             "contextFastMs": context_ms,
             "captureMs": capture_ms,
             "ftsMs": fts_ms,
@@ -109,8 +135,13 @@ pub fn run(args: BenchArgs) -> Result<()> {
             "memoryMb": null,
             "candidateBounds": {
                 "queryTerms": index::MAX_DECISION_QUERY_TERMS,
+                "requestOptions": index::MAX_DECISION_OPTIONS,
                 "rowsPerTerm": index::MAX_DECISION_ROWS_PER_TERM,
-                "maximumFuzzyRows": index::MAX_DECISION_FUZZY_ROWS
+                "executableRules": index::MAX_DECISION_RULES,
+                "unavailableChoices": index::MAX_DECISION_UNAVAILABLE_CHOICES,
+                "maximumExactRows": index::MAX_DECISION_EXACT_ROWS,
+                "maximumFuzzyRowsScored": index::MAX_DECISION_FUZZY_ROWS,
+                "retrieval": "actual-rule-term-postings"
             },
             "host": {
                 "os": std::env::consts::OS,
@@ -152,8 +183,11 @@ fn timed_value<T>(work: impl FnOnce() -> Result<T>) -> Result<(u128, T)> {
 }
 
 fn generate_scale_notes(root: &Path, count: usize) -> Result<()> {
-    if count == 0 || count > MAX_SCALE {
-        bail!("--scale must be between 1 and {MAX_SCALE}");
+    if count == 0 || count > index::MAX_DECISION_RULES {
+        bail!(
+            "--scale must be between 1 and {}",
+            index::MAX_DECISION_RULES
+        );
     }
     let base = root.join(SCALE_DIR);
     let _ = fs::remove_dir_all(&base);
@@ -169,21 +203,60 @@ fn generate_scale_notes(root: &Path, count: usize) -> Result<()> {
 }
 
 fn synthetic_note(i: usize, id: &str) -> Result<String> {
-    let note_type = match i % 6 {
-        0 => "decision-policy",
-        1 => "tradeoff-rule",
-        2 => "hard-constraint",
-        3 => "uncertainty-rule",
-        4 => "soft-preference",
-        _ => "ask-trigger",
+    let (situation, options, chosen, rejected) = if i == 0 {
+        (
+            "Choose formatter database benchmark fallback alpha beta gamma".into(),
+            vec!["rustfmt".into(), "z custom formatter".into()],
+            "z custom formatter".into(),
+            vec!["rustfmt".into()],
+        )
+    } else if (1..=8).contains(&i) {
+        let prefix = char::from(b'a' + (i - 1) as u8);
+        let absent_choice = format!("{prefix} absent formatter");
+        (
+            format!("Choose formatter unrelated omega decoy {i:02}"),
+            vec!["rustfmt".into(), absent_choice.clone()],
+            absent_choice,
+            vec!["rustfmt".into()],
+        )
+    } else if (9..=137).contains(&i) {
+        (
+            "Choose database formatter benchmark fallback alpha beta gamma".into(),
+            vec!["rustfmt".into(), "dprint".into()],
+            "rustfmt".into(),
+            vec!["dprint".into()],
+        )
+    } else {
+        let prefer_markdown = i.is_multiple_of(2);
+        let chosen = if prefer_markdown {
+            "Markdown+JSONL"
+        } else {
+            "SQLite"
+        };
+        let rejected = if prefer_markdown {
+            vec!["SQLite".into(), "External Vector DB".into()]
+        } else {
+            vec!["Markdown+JSONL".into(), "External Vector DB".into()]
+        };
+        (
+            format!("Choose benchmark storage local deterministic {i:05}"),
+            vec![
+                "Markdown+JSONL".into(),
+                "SQLite".into(),
+                "External Vector DB".into(),
+            ],
+            chosen.into(),
+            rejected,
+        )
     };
-    let risk_tier = match i % 5 {
-        0 => "reversible-auto",
-        1 => "suggest-only",
-        2 => "approval-required",
-        3 => "ask-before-action",
-        _ => "never-auto",
-    };
+    let marker = markdown::decision_rule_marker(&markdown::DecisionRule {
+        situation,
+        options,
+        decision_type: Some("architecture".into()),
+        scope: Some("global".into()),
+        chosen,
+        rejected,
+    })?;
     let link = if i == 0 {
         String::new()
     } else {
@@ -193,15 +266,23 @@ fn synthetic_note(i: usize, id: &str) -> Result<String> {
         )
     };
     Ok(format!(
-        "{}# Bench Decision {:05}\n\n## Policy\n\nPrefer local-first decisions, embedded SQLite, deterministic gates, and reversible defaults for personal tooling.\n\n## Signals\n\nThis synthetic note exercises full-text search, graph links, and local 256-dimensional note embeddings for production scale checks.{link}\n",
-        markdown::frontmatter(id, note_type, risk_tier, "personal"),
-        i
+        "{}# Bench Decision {:05}\n\n## Policy\n\nPrefer local-first decisions, embedded SQLite, deterministic gates, and reversible defaults for personal tooling.\n\n## Deterministic Rule\n\n{marker}\n\n## Signals\n\nThis synthetic note exercises executable posting retrieval, full-text search, graph links, and local 256-dimensional note embeddings for production scale checks.{link}\n",
+        markdown::frontmatter(id, "decision-example", "reversible-auto", "personal"),
+        i,
     ))
 }
 
 fn indexed_note_count(root: &Path) -> Result<usize> {
     let conn = index::connection(root)?;
     let count: i64 = conn.query_row("select count(*) from notes", params![], |row| row.get(0))?;
+    Ok(count as usize)
+}
+
+fn indexed_rule_count(root: &Path) -> Result<usize> {
+    let conn = index::connection(root)?;
+    let count: i64 = conn.query_row("select count(*) from decision_rules", params![], |row| {
+        row.get(0)
+    })?;
     Ok(count as usize)
 }
 
@@ -215,6 +296,11 @@ mod tests {
         let note = markdown::parse_note("bench.md".into(), &text).unwrap();
         assert_eq!(note.id, "bench-decision-00007");
         assert_eq!(note.links, vec!["bench-decision-00006"]);
+        assert!(
+            markdown::parse_decision_rule_result(&note.body)
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]

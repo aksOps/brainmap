@@ -1,5 +1,5 @@
 use crate::markdown::{self, Note};
-use crate::util;
+use crate::{index, util};
 use anyhow::{Context, Result, bail};
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
@@ -633,7 +633,7 @@ fn init_vault_with_output(
             serde_json::to_vec_pretty(&json!({
                 "valid": false,
                 "createdAt": util::now_iso(),
-                "schemaVersion": "decision-engine-v3"
+                "schemaVersion": index::COMPILED_SCHEMA_VERSION
             }))?
             .as_slice(),
         )?;
