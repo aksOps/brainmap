@@ -1,0 +1,11 @@
+{
+  "id": "10",
+  "name": "cargo-package",
+  "command": "cargo package --locked -p brainmap-cli ",
+  "cwd": "<SOURCE_ROOT>",
+  "startedAt": "2026-07-10T09:44:00Z",
+  "endedAt": "2026-07-10T09:44:13Z",
+  "elapsedSeconds": 13,
+  "exitCode": 0,
+  "outputBytes": 416
+}

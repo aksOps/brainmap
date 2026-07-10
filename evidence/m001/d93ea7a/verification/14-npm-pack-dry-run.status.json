@@ -1,0 +1,11 @@
+{
+  "id": "14",
+  "name": "npm-pack-dry-run",
+  "command": "npm pack --dry-run ./npm/brainmap ",
+  "cwd": "<SOURCE_ROOT>",
+  "startedAt": "2026-07-10T09:44:54Z",
+  "endedAt": "2026-07-10T09:44:56Z",
+  "elapsedSeconds": 2,
+  "exitCode": 0,
+  "outputBytes": 583
+}

@@ -1,0 +1,7 @@
+{
+  "exitCode": 1,
+  "stderr": "error: unknown field `unknownField`, expected one of `intent`, `situation`, `options`, `proposedAction`, `risk`, `reversible`, `decisionType`, `scope`, `agentConfidence` at line 1 column 76",
+  "checks": {
+    "rejectedUnknownField": true
+  }
+}

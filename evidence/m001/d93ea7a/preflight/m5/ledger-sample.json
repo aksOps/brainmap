@@ -1,0 +1,62 @@
+{
+  "gate": {
+    "appliedPolicies": [
+      "[[60-decision-examples/upd_1783676900661_2b7c546abaee.md]]"
+    ],
+    "candidateCollision": false,
+    "confidence": 0.97,
+    "createdAt": "2026-07-10T09:48:20Z",
+    "decisionType": "tooling",
+    "evaluationLatencyMicros": 2325,
+    "id": "dec_1783676900722_1fae8187c426",
+    "intent": "plan",
+    "kind": "decision-gate",
+    "matchKind": "exact",
+    "matchMargin": null,
+    "matchScore": 1.0,
+    "options": [
+      "npm",
+      "pnpm"
+    ],
+    "outcome": "proceed",
+    "proposedAction": "Use pnpm for the local synthetic project",
+    "rejectedOptions": [
+      "npm"
+    ],
+    "restrictionsApplied": [],
+    "reversible": true,
+    "risk": "low",
+    "ruleId": "upd_1783676900661_2b7c546abaee",
+    "ruleScope": "project:synthetic-alpha",
+    "scope": "project:synthetic-alpha",
+    "selectedOption": "pnpm",
+    "situation": "Choose synthetic package manager for local alpha project"
+  },
+  "record": {
+    "chosen": "pnpm",
+    "createdAt": "2026-07-10T09:48:20Z",
+    "evidenceStrength": "weak",
+    "id": "dec_1783676900722_1fae8187c426",
+    "kind": "record-decision",
+    "wasAsked": false
+  },
+  "feedback": {
+    "chosen": "npm",
+    "classification": "corrected-decision",
+    "createdAt": "2026-07-10T09:48:20Z",
+    "decisionId": "dec_1783676900722_1fae8187c426",
+    "id": "feedback_1783676900758_9eac14080a3f",
+    "incidentType": null,
+    "kind": "learn-feedback",
+    "rejected": [
+      "pnpm"
+    ]
+  },
+  "checks": {
+    "gateHasReplayFields": true,
+    "recordReferencesDecision": true,
+    "feedbackReferencesDecision": true,
+    "feedbackExplicitChoice": true,
+    "feedbackExplicitRejection": true
+  }
+}

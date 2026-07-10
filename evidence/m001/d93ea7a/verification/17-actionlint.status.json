@@ -1,0 +1,11 @@
+{
+  "id": "17",
+  "name": "actionlint",
+  "command": "actionlint .github/workflows/ci.yml .github/workflows/release.yml ",
+  "cwd": "<SOURCE_ROOT>",
+  "startedAt": "2026-07-10T09:44:57Z",
+  "endedAt": "2026-07-10T09:44:57Z",
+  "elapsedSeconds": 0,
+  "exitCode": 0,
+  "outputBytes": 0
+}

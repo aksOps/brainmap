@@ -1,0 +1,29 @@
+{
+  "decisionId": "dec_1783676900901_3e3265ac7575",
+  "outcome": "ask_user",
+  "recommendation": "No learned or executable policy selects among the current options.",
+  "selectedOption": null,
+  "rejectedOptions": [
+    "npm",
+    "pnpm"
+  ],
+  "confidence": 0.95,
+  "candidateCollision": false,
+  "riskTier": "ask_before_action",
+  "reasoningSummary": [
+    "Applied deterministic policy precedence.",
+    "Option order is non-authoritative; the confidence threshold cannot select a default."
+  ],
+  "matchedPolicies": [],
+  "appliedPolicies": [],
+  "restrictionsApplied": [],
+  "askUserQuestion": "Which option should be chosen: npm, pnpm?",
+  "defaultIfNoAnswer": "defer or take the cheapest reversible step",
+  "learningEvent": {
+    "chosen": null,
+    "confidence": 0.95,
+    "kind": "decision-gate",
+    "shouldRecord": false,
+    "situation": "Choose synthetic package manager for local alpha project"
+  }
+}

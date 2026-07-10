@@ -1,0 +1,36 @@
+{
+  "decisionId": "dec_1783676709815_5c0466677342",
+  "outcome": "proceed",
+  "recommendation": "Proceed with violet; it matches a learned decision.",
+  "selectedOption": "violet",
+  "rejectedOptions": [
+    "amber"
+  ],
+  "confidence": 0.97,
+  "ruleId": "synthetic-frobnicator-policy",
+  "ruleScope": "project:synthetic",
+  "matchScore": 1.0,
+  "matchKind": "exact",
+  "candidateCollision": false,
+  "riskTier": "reversible_auto",
+  "reasoningSummary": [
+    "Applied deterministic policy precedence.",
+    "Applied compiled learned decision rule with score 1.00."
+  ],
+  "matchedPolicies": [
+    "[[20-decision-frames/synthetic-frobnicator-policy.md]]"
+  ],
+  "appliedPolicies": [
+    "[[20-decision-frames/synthetic-frobnicator-policy.md]]"
+  ],
+  "restrictionsApplied": [],
+  "askUserQuestion": null,
+  "defaultIfNoAnswer": null,
+  "learningEvent": {
+    "chosen": "violet",
+    "confidence": 0.97,
+    "kind": "decision-gate",
+    "shouldRecord": false,
+    "situation": "Choose synthetic frobnicator for local alpha project"
+  }
+}

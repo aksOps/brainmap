@@ -1,0 +1,11 @@
+{
+  "id": "03",
+  "name": "cargo-test",
+  "command": "cargo test --locked --workspace --all-targets --all-features ",
+  "cwd": "<SOURCE_ROOT>",
+  "startedAt": "2026-07-10T09:41:25Z",
+  "endedAt": "2026-07-10T09:42:24Z",
+  "elapsedSeconds": 59,
+  "exitCode": 0,
+  "outputBytes": 33925
+}

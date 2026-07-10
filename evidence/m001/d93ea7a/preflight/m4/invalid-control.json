@@ -1,0 +1,12 @@
+{
+  "class": "control",
+  "exitCode": 1,
+  "stdout": "",
+  "stderr": "error: invalid executable control policy 40-restrictions/malformed-control.md: invalid decision rule JSON: key must be a string at line 1 column 2",
+  "checks": {
+    "failedClosed": true,
+    "namesNote": true,
+    "actionableClass": true,
+    "fieldError": true
+  }
+}

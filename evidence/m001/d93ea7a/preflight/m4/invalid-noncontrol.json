@@ -1,0 +1,12 @@
+{
+  "class": "non-control",
+  "exitCode": 0,
+  "stdout": "index rebuilt: <VAULT>/.brainmap/brainmap.sqlite",
+  "stderr": "warning: excluding invalid executable rule 60-decision-examples/malformed-example.md: invalid decision rule JSON: key must be a string at line 1 column 2",
+  "checks": {
+    "indexContinued": true,
+    "namesNote": true,
+    "actionableExclusion": true,
+    "fieldError": true
+  }
+}

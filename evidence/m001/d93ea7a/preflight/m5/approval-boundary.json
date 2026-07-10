@@ -1,0 +1,10 @@
+{
+  "previewOutput": "would apply upd_1783676936369_8f8f63a3a6c4: when \"Choose synthetic package manager for local alpha project\", choose \"pnpm\", scope=project:synthetic-alpha\napplied 0 packet(s)",
+  "canonicalHashBefore": "acbd5f3563586dac581197d1050bba65326ba69ae6f3655c724a3df0cf5297f3",
+  "canonicalHashAfter": "acbd5f3563586dac581197d1050bba65326ba69ae6f3655c724a3df0cf5297f3",
+  "canonicalTreeUnchanged": true,
+  "changedFilesIncludingRebuildableIndex": [
+    ".brainmap/locks/update-apply.lock"
+  ],
+  "explanation": "preview acquires the local update lock; canonical Markdown/JSONL/packet content is unchanged"
+}

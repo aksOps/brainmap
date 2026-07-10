@@ -1,0 +1,29 @@
+{
+  "decisionId": "dec_1783676615792_92e428ece715",
+  "outcome": "ask_user",
+  "recommendation": "No learned or executable policy selects among the current options.",
+  "selectedOption": null,
+  "rejectedOptions": [
+    "amber",
+    "violet"
+  ],
+  "confidence": 0.56,
+  "candidateCollision": false,
+  "riskTier": "ask_before_action",
+  "reasoningSummary": [
+    "Applied deterministic policy precedence.",
+    "Option order is non-authoritative; the confidence threshold cannot select a default."
+  ],
+  "matchedPolicies": [],
+  "appliedPolicies": [],
+  "restrictionsApplied": [],
+  "askUserQuestion": "Which option should be chosen: amber, violet?",
+  "defaultIfNoAnswer": "defer or take the cheapest reversible step",
+  "learningEvent": {
+    "chosen": null,
+    "confidence": 0.56,
+    "kind": "decision-gate",
+    "shouldRecord": false,
+    "situation": "Choose synthetic frobnicator for local alpha project"
+  }
+}

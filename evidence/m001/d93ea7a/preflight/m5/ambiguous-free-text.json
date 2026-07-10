@@ -1,0 +1,23 @@
+{
+  "output": "onboarding schema: brainmap-onboarding-v1\nonboarding exact pending preview: {\"event\":{\"createdAt\":\"2026-07-10T09:51:08Z\",\"decisionType\":\"workflow\",\"freeText\":\"It depends on how reversible the current change is\",\"id\":\"onboarding_1783677068144_b76842b2d170\",\"schemaVersion\":\"brainmap-onboarding-v1\",\"scope\":\"project:synthetic-experimental\",\"situation\":\"Choose synthetic deployment rhythm for an experimental project\",\"status\":\"pending-clarification\"},\"path\":\"90-calibration/pending-onboarding.jsonl\"}\nonboarding applied 0 decision(s); kept 1 answer(s) pending clarification",
+  "pendingEvent": {
+    "createdAt": "2026-07-10T09:51:08Z",
+    "decisionType": "workflow",
+    "freeText": "It depends on how reversible the current change is",
+    "id": "onboarding_1783677068144_b76842b2d170",
+    "schemaVersion": "brainmap-onboarding-v1",
+    "scope": "project:synthetic-experimental",
+    "situation": "Choose synthetic deployment rhythm for an experimental project",
+    "status": "pending-clarification"
+  },
+  "gate": {
+    "outcome": "ask_user",
+    "selectedOption": null,
+    "ruleId": null
+  },
+  "checks": {
+    "keptPending": true,
+    "pendingClassification": true,
+    "gateStillAsks": true
+  }
+}

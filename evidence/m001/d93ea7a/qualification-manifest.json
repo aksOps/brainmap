@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "brainmap-release-qualification-v1",
+  "sourceCommit": "d93ea7ada09043a1422478b60d5f3223037ff8ad",
+  "sourceTreeDirty": false,
+  "startedAt": "2026-07-10T09:28:04Z",
+  "completedAt": "2026-07-10T09:28:24Z",
+  "host": "Linux 6.8.0-134-generic x86_64",
+  "toolchain": {
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)"
+  },
+  "binaries": {
+    "brainmapSha256": "cb0f6ed0f544880b5c526b619de16af25ff5cd7cfa7db6eae3c6e3c69a8df75d",
+    "brainmapdSha256": "f8a94343f12f20dc6344686934f114deda15ebea0c4f2d9ebea0e2ad03b2c078"
+  },
+  "portableArchiveSha256": "1373a1226d36fb8c5ad9f314b211bfe6f4c5763869d9373b7185b6b03c3ba421"
+}

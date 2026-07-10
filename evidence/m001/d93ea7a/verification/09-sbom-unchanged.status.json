@@ -1,0 +1,11 @@
+{
+  "id": "09",
+  "name": "sbom-unchanged",
+  "command": "git diff --exit-code -- crates/brainmap-cli/brainmap.json ",
+  "cwd": "<SOURCE_ROOT>",
+  "startedAt": "2026-07-10T09:44:00Z",
+  "endedAt": "2026-07-10T09:44:00Z",
+  "elapsedSeconds": 0,
+  "exitCode": 0,
+  "outputBytes": 0
+}

@@ -1,0 +1,387 @@
+warning[duplicate]: found 2 duplicate entries for crate 'base64'
+   ┌─ <SOURCE_ROOT>/Cargo.lock:15:1
+   │  
+15 │ ╭ base64 0.13.1 registry+https://github.com/rust-lang/crates.io-index
+16 │ │ base64 0.21.7 registry+https://github.com/rust-lang/crates.io-index
+   │ ╰───────────────────────────────────────────────────────────────────┘ lock entries
+   │  
+   ├ base64 v0.13.1
+     └── spm_precompiled v0.1.4
+         └── tokenizers v0.21.4
+             └── model2vec-rs v0.2.1
+                 └── brainmap-cli v0.1.0
+   ├ base64 v0.21.7
+     ├── age v0.11.3
+     │   └── brainmap-cli v0.1.0
+     └── age-core v0.11.0
+         └── age v0.11.3 (*)
+
+warning[duplicate]: found 3 duplicate entries for crate 'getrandom'
+   ┌─ <SOURCE_ROOT>/Cargo.lock:87:1
+   │  
+87 │ ╭ getrandom 0.2.17 registry+https://github.com/rust-lang/crates.io-index
+88 │ │ getrandom 0.3.4 registry+https://github.com/rust-lang/crates.io-index
+89 │ │ getrandom 0.4.3 registry+https://github.com/rust-lang/crates.io-index
+   │ ╰─────────────────────────────────────────────────────────────────────┘ lock entries
+   │  
+   ├ getrandom v0.2.17
+     └── rand_core v0.6.4
+         ├── rand v0.8.6
+         │   ├── age v0.11.3
+         │   │   └── brainmap-cli v0.1.0
+         │   └── age-core v0.11.0
+         │       └── age v0.11.3 (*)
+         ├── rand_chacha v0.3.1
+         │   └── rand v0.8.6 (*)
+         └── x25519-dalek v2.0.1
+             └── age v0.11.3 (*)
+   ├ getrandom v0.3.4
+     ├── ahash v0.8.12
+     │   └── tokenizers v0.21.4
+     │       └── model2vec-rs v0.2.1
+     │           └── brainmap-cli v0.1.0
+     ├── jobserver v0.1.34
+     │   └── cc v1.2.66
+     │       ├── (build) esaxx-rs v0.1.10
+     │       │   └── tokenizers v0.21.4 (*)
+     │       ├── (build) iana-time-zone-haiku v0.1.2
+     │       │   └── iana-time-zone v0.1.65
+     │       │       └── chrono v0.4.45
+     │       │           └── brainmap-cli v0.1.0 (*)
+     │       ├── (build) libsqlite3-sys v0.38.1
+     │       │   └── rusqlite v0.40.1
+     │       │       └── brainmap-cli v0.1.0 (*)
+     │       ├── (build) sqlite-wasm-rs v0.5.5
+     │       │   └── rusqlite v0.40.1 (*)
+     │       └── (build) zstd-sys v2.0.16+zstd.1.5.7
+     │           └── zstd-safe v7.2.4
+     │               └── zstd v0.13.3
+     │                   └── (build) brainmap-cli v0.1.0 (*)
+     ├── rand_core v0.9.5
+     │   ├── rand v0.9.4
+     │   │   └── tokenizers v0.21.4 (*)
+     │   └── rand_chacha v0.9.0
+     │       └── rand v0.9.4 (*)
+     └── tokenizers v0.21.4 (*)
+   ├ getrandom v0.4.3
+     └── tempfile v3.27.0
+         └── brainmap-cli v0.1.0
+
+warning[duplicate]: found 2 duplicate entries for crate 'hashbrown'
+   ┌─ <SOURCE_ROOT>/Cargo.lock:91:1
+   │  
+91 │ ╭ hashbrown 0.16.1 registry+https://github.com/rust-lang/crates.io-index
+92 │ │ hashbrown 0.17.1 registry+https://github.com/rust-lang/crates.io-index
+   │ ╰──────────────────────────────────────────────────────────────────────┘ lock entries
+   │  
+   ├ hashbrown v0.16.1
+     └── rsqlite-vfs v0.1.1
+         └── sqlite-wasm-rs v0.5.5
+             └── rusqlite v0.40.1
+                 └── brainmap-cli v0.1.0
+   ├ hashbrown v0.17.1
+     └── hashlink v0.12.0
+         └── rusqlite v0.40.1
+             └── brainmap-cli v0.1.0
+
+warning[duplicate]: found 2 duplicate entries for crate 'r-efi'
+    ┌─ <SOURCE_ROOT>/Cargo.lock:153:1
+    │  
+153 │ ╭ r-efi 5.3.0 registry+https://github.com/rust-lang/crates.io-index
+154 │ │ r-efi 6.0.0 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰─────────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ r-efi v5.3.0
+      └── getrandom v0.3.4
+          ├── ahash v0.8.12
+          │   └── tokenizers v0.21.4
+          │       └── model2vec-rs v0.2.1
+          │           └── brainmap-cli v0.1.0
+          ├── jobserver v0.1.34
+          │   └── cc v1.2.66
+          │       ├── (build) esaxx-rs v0.1.10
+          │       │   └── tokenizers v0.21.4 (*)
+          │       ├── (build) iana-time-zone-haiku v0.1.2
+          │       │   └── iana-time-zone v0.1.65
+          │       │       └── chrono v0.4.45
+          │       │           └── brainmap-cli v0.1.0 (*)
+          │       ├── (build) libsqlite3-sys v0.38.1
+          │       │   └── rusqlite v0.40.1
+          │       │       └── brainmap-cli v0.1.0 (*)
+          │       ├── (build) sqlite-wasm-rs v0.5.5
+          │       │   └── rusqlite v0.40.1 (*)
+          │       └── (build) zstd-sys v2.0.16+zstd.1.5.7
+          │           └── zstd-safe v7.2.4
+          │               └── zstd v0.13.3
+          │                   └── (build) brainmap-cli v0.1.0 (*)
+          ├── rand_core v0.9.5
+          │   ├── rand v0.9.4
+          │   │   └── tokenizers v0.21.4 (*)
+          │   └── rand_chacha v0.9.0
+          │       └── rand v0.9.4 (*)
+          └── tokenizers v0.21.4 (*)
+    ├ r-efi v6.0.0
+      └── getrandom v0.4.3
+          └── tempfile v3.27.0
+              └── brainmap-cli v0.1.0
+
+warning[duplicate]: found 2 duplicate entries for crate 'rand'
+    ┌─ <SOURCE_ROOT>/Cargo.lock:155:1
+    │  
+155 │ ╭ rand 0.8.6 registry+https://github.com/rust-lang/crates.io-index
+156 │ │ rand 0.9.4 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰────────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ rand v0.8.6
+      ├── age v0.11.3
+      │   └── brainmap-cli v0.1.0
+      └── age-core v0.11.0
+          └── age v0.11.3 (*)
+    ├ rand v0.9.4
+      └── tokenizers v0.21.4
+          └── model2vec-rs v0.2.1
+              └── brainmap-cli v0.1.0
+
+warning[duplicate]: found 2 duplicate entries for crate 'rand_chacha'
+    ┌─ <SOURCE_ROOT>/Cargo.lock:157:1
+    │  
+157 │ ╭ rand_chacha 0.3.1 registry+https://github.com/rust-lang/crates.io-index
+158 │ │ rand_chacha 0.9.0 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰───────────────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ rand_chacha v0.3.1
+      └── rand v0.8.6
+          ├── age v0.11.3
+          │   └── brainmap-cli v0.1.0
+          └── age-core v0.11.0
+              └── age v0.11.3 (*)
+    ├ rand_chacha v0.9.0
+      └── rand v0.9.4
+          └── tokenizers v0.21.4
+              └── model2vec-rs v0.2.1
+                  └── brainmap-cli v0.1.0
+
+warning[duplicate]: found 2 duplicate entries for crate 'rand_core'
+    ┌─ <SOURCE_ROOT>/Cargo.lock:159:1
+    │  
+159 │ ╭ rand_core 0.6.4 registry+https://github.com/rust-lang/crates.io-index
+160 │ │ rand_core 0.9.5 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰─────────────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ rand_core v0.6.4
+      ├── rand v0.8.6
+      │   ├── age v0.11.3
+      │   │   └── brainmap-cli v0.1.0
+      │   └── age-core v0.11.0
+      │       └── age v0.11.3 (*)
+      ├── rand_chacha v0.3.1
+      │   └── rand v0.8.6 (*)
+      └── x25519-dalek v2.0.1
+          └── age v0.11.3 (*)
+    ├ rand_core v0.9.5
+      ├── rand v0.9.4
+      │   └── tokenizers v0.21.4
+      │       └── model2vec-rs v0.2.1
+      │           └── brainmap-cli v0.1.0
+      └── rand_chacha v0.9.0
+          └── rand v0.9.4 (*)
+
+warning[duplicate]: found 2 duplicate entries for crate 'rustc-hash'
+    ┌─ <SOURCE_ROOT>/Cargo.lock:174:1
+    │  
+174 │ ╭ rustc-hash 1.1.0 registry+https://github.com/rust-lang/crates.io-index
+175 │ │ rustc-hash 2.1.3 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰──────────────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ rustc-hash v1.1.0
+      └── fluent-bundle v0.15.3
+          └── fluent v0.16.1
+              ├── i18n-embed v0.15.4
+              │   ├── age v0.11.3
+              │   │   └── brainmap-cli v0.1.0
+              │   └── i18n-embed-fl v0.9.4
+              │       └── age v0.11.3 (*)
+              └── i18n-embed-fl v0.9.4 (*)
+    ├ rustc-hash v2.1.3
+      └── type-map v0.5.1
+          └── intl-memoizer v0.5.3
+              ├── fluent-bundle v0.15.3
+              │   └── fluent v0.16.1
+              │       ├── i18n-embed v0.15.4
+              │       │   ├── age v0.11.3
+              │       │   │   └── brainmap-cli v0.1.0
+              │       │   └── i18n-embed-fl v0.9.4
+              │       │       └── age v0.11.3 (*)
+              │       └── i18n-embed-fl v0.9.4 (*)
+              └── i18n-embed v0.15.4 (*)
+
+warning[duplicate]: found 2 duplicate entries for crate 'thiserror'
+    ┌─ <SOURCE_ROOT>/Cargo.lock:206:1
+    │  
+206 │ ╭ thiserror 1.0.69 registry+https://github.com/rust-lang/crates.io-index
+207 │ │ thiserror 2.0.18 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰──────────────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ thiserror v1.0.69
+      ├── fluent-syntax v0.11.1
+      │   ├── fluent-bundle v0.15.3
+      │   │   └── fluent v0.16.1
+      │   │       ├── i18n-embed v0.15.4
+      │   │       │   ├── age v0.11.3
+      │   │       │   │   └── brainmap-cli v0.1.0
+      │   │       │   └── i18n-embed-fl v0.9.4
+      │   │       │       └── age v0.11.3 (*)
+      │   │       └── i18n-embed-fl v0.9.4 (*)
+      │   ├── i18n-embed v0.15.4 (*)
+      │   └── i18n-embed-fl v0.9.4 (*)
+      ├── i18n-config v0.4.8
+      │   ├── i18n-embed-fl v0.9.4 (*)
+      │   └── i18n-embed-impl v0.8.4
+      │       └── i18n-embed v0.15.4 (*)
+      └── i18n-embed v0.15.4 (*)
+    ├ thiserror v2.0.18
+      ├── rsqlite-vfs v0.1.1
+      │   └── sqlite-wasm-rs v0.5.5
+      │       └── rusqlite v0.40.1
+      │           └── brainmap-cli v0.1.0
+      └── tokenizers v0.21.4
+          └── model2vec-rs v0.2.1
+              └── brainmap-cli v0.1.0 (*)
+
+warning[duplicate]: found 2 duplicate entries for crate 'thiserror-impl'
+    ┌─ <SOURCE_ROOT>/Cargo.lock:208:1
+    │  
+208 │ ╭ thiserror-impl 1.0.69 registry+https://github.com/rust-lang/crates.io-index
+209 │ │ thiserror-impl 2.0.18 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰───────────────────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ thiserror-impl v1.0.69
+      └── thiserror v1.0.69
+          ├── fluent-syntax v0.11.1
+          │   ├── fluent-bundle v0.15.3
+          │   │   └── fluent v0.16.1
+          │   │       ├── i18n-embed v0.15.4
+          │   │       │   ├── age v0.11.3
+          │   │       │   │   └── brainmap-cli v0.1.0
+          │   │       │   └── i18n-embed-fl v0.9.4
+          │   │       │       └── age v0.11.3 (*)
+          │   │       └── i18n-embed-fl v0.9.4 (*)
+          │   ├── i18n-embed v0.15.4 (*)
+          │   └── i18n-embed-fl v0.9.4 (*)
+          ├── i18n-config v0.4.8
+          │   ├── i18n-embed-fl v0.9.4 (*)
+          │   └── i18n-embed-impl v0.8.4
+          │       └── i18n-embed v0.15.4 (*)
+          └── i18n-embed v0.15.4 (*)
+    ├ thiserror-impl v2.0.18
+      └── thiserror v2.0.18
+          ├── rsqlite-vfs v0.1.1
+          │   └── sqlite-wasm-rs v0.5.5
+          │       └── rusqlite v0.40.1
+          │           └── brainmap-cli v0.1.0
+          └── tokenizers v0.21.4
+              └── model2vec-rs v0.2.1
+                  └── brainmap-cli v0.1.0 (*)
+
+warning[duplicate]: found 2 duplicate entries for crate 'toml'
+    ┌─ <SOURCE_ROOT>/Cargo.lock:212:1
+    │  
+212 │ ╭ toml 0.5.11 registry+https://github.com/rust-lang/crates.io-index
+213 │ │ toml 1.1.2+spec-1.1.0 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰───────────────────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ toml v0.5.11
+      └── find-crate v0.6.3
+          ├── i18n-embed-fl v0.9.4
+          │   └── age v0.11.3
+          │       └── brainmap-cli v0.1.0
+          └── i18n-embed-impl v0.8.4
+              └── i18n-embed v0.15.4
+                  ├── age v0.11.3 (*)
+                  └── i18n-embed-fl v0.9.4 (*)
+    ├ toml v1.1.2+spec-1.1.0
+      └── brainmap-cli v0.1.0
+
+warning[duplicate]: found 2 duplicate entries for crate 'windows-sys'
+    ┌─ <SOURCE_ROOT>/Cargo.lock:244:1
+    │  
+244 │ ╭ windows-sys 0.59.0 registry+https://github.com/rust-lang/crates.io-index
+245 │ │ windows-sys 0.61.2 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰────────────────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ windows-sys v0.59.0
+      └── console v0.15.11
+          └── indicatif v0.17.11
+              └── tokenizers v0.21.4
+                  └── model2vec-rs v0.2.1
+                      └── brainmap-cli v0.1.0
+    ├ windows-sys v0.61.2
+      ├── anstyle-query v1.1.5
+      │   └── anstream v1.0.0
+      │       └── clap_builder v4.6.0
+      │           └── clap v4.6.1
+      │               ├── brainmap-cli v0.1.0
+      │               └── model2vec-rs v0.2.1
+      │                   └── brainmap-cli v0.1.0 (*)
+      ├── anstyle-wincon v3.0.11
+      │   └── anstream v1.0.0 (*)
+      ├── brainmap-cli v0.1.0 (*)
+      ├── errno v0.3.14
+      │   └── rustix v1.1.4
+      │       ├── fs4 v1.1.0
+      │       │   └── brainmap-cli v0.1.0 (*)
+      │       ├── tempfile v3.27.0
+      │       │   └── brainmap-cli v0.1.0 (*)
+      │       └── xattr v1.6.1
+      │           └── tar v0.4.46
+      │               └── (build) brainmap-cli v0.1.0 (*)
+      ├── fs4 v1.1.0 (*)
+      ├── rustix v1.1.4 (*)
+      ├── tempfile v3.27.0 (*)
+      └── winapi-util v0.1.11
+          ├── same-file v1.0.6
+          │   └── walkdir v2.5.0
+          │       ├── i18n-embed v0.15.4
+          │       │   ├── age v0.11.3
+          │       │   │   └── brainmap-cli v0.1.0 (*)
+          │       │   └── i18n-embed-fl v0.9.4
+          │       │       └── age v0.11.3 (*)
+          │       ├── rust-embed v8.11.0
+          │       │   ├── age v0.11.3 (*)
+          │       │   └── i18n-embed v0.15.4 (*)
+          │       ├── rust-embed-impl v8.11.0
+          │       │   └── rust-embed v8.11.0 (*)
+          │       └── rust-embed-utils v8.11.0
+          │           ├── rust-embed v8.11.0 (*)
+          │           └── rust-embed-impl v8.11.0 (*)
+          └── walkdir v2.5.0 (*)
+
+warning[no-license-field]: license expression was not specified in manifest for crate 'model2vec-rs = 0.2.1'
+ ├ model2vec-rs v0.2.1
+   └── brainmap-cli v0.1.0
+
+warning[license-not-encountered]: license was not encountered
+   ┌─ <SOURCE_ROOT>/deny.toml:20:4
+   │
+20 │   "CC0-1.0",
+   │    ━━━━━━━ unmatched license allowance
+
+warning[license-not-encountered]: license was not encountered
+   ┌─ <SOURCE_ROOT>/deny.toml:17:4
+   │
+17 │   "ISC",
+   │    ━━━ unmatched license allowance
+
+warning[license-not-encountered]: license was not encountered
+   ┌─ <SOURCE_ROOT>/deny.toml:16:4
+   │
+16 │   "MPL-2.0",
+   │    ━━━━━━━ unmatched license allowance
+
+warning[license-not-encountered]: license was not encountered
+   ┌─ <SOURCE_ROOT>/deny.toml:19:4
+   │
+19 │   "Unicode-DFS-2016",
+   │    ━━━━━━━━━━━━━━━━ unmatched license allowance
+
+advisories ok, bans ok, licenses ok, sources ok

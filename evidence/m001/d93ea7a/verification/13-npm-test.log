@@ -1,0 +1,4 @@
+
+> @aksops/brainmap@0.1.0 test
+> test -x bin/brainmap && test -x bin/brainmapd && ./bin/brainmap --help >/dev/null
+

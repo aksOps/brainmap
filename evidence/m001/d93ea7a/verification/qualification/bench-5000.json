@@ -1,0 +1,59 @@
+{
+  "candidateBounds": {
+    "executableRules": 5000,
+    "maximumExactRows": 33,
+    "maximumFuzzyRowsScored": 40,
+    "queryTerms": 16,
+    "requestOptions": 32,
+    "retrieval": "actual-rule-term-postings",
+    "rowsPerTerm": 5000,
+    "unavailableChoices": 8
+  },
+  "captureMs": 1,
+  "contextFastMs": 7,
+  "daemonGateMs": null,
+  "embeddings": null,
+  "executableRules": 5000,
+  "ftsMs": 0,
+  "ftsResults": 10,
+  "gateIterations": 200,
+  "gateMaxMs": 11.685,
+  "gateMs": 10.484,
+  "gateP50Ms": 9.831,
+  "gateP95Ms": 10.484,
+  "gateProbe": {
+    "candidateCollision": true,
+    "matchKind": "ambiguous",
+    "outcome": "ask_user"
+  },
+  "generatedUnder": "90-calibration/scale-bench",
+  "host": {
+    "architecture": "x86_64",
+    "brainmapVersion": "0.1.0",
+    "logicalCpus": 6,
+    "optimized": true,
+    "os": "linux"
+  },
+  "hotPath": {
+    "agentMemory": false,
+    "embeddingGeneration": false,
+    "llm": false,
+    "modelLoad": false,
+    "network": false
+  },
+  "indexRebuildMs": 479,
+  "memoryMb": null,
+  "notes": 5000,
+  "query": "local first decisions",
+  "scaleMax": 5000,
+  "scaleRequested": 5000,
+  "unavailableChoiceProbe": {
+    "candidateCollision": false,
+    "matchKind": "fuzzy",
+    "matchedPolicies": [
+      "[[90-calibration/scale-bench/00/bench-decision-00000.md]]"
+    ],
+    "outcome": "ask_user"
+  },
+  "vault": "<qualification-temp>/Bench-5000"
+}

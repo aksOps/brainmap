@@ -1,0 +1,37 @@
+{
+  "before": {
+    "outcome": "ask_user",
+    "selectedOption": null,
+    "ruleId": null,
+    "appliedPolicies": []
+  },
+  "active": {
+    "outcome": "proceed",
+    "selectedOption": "violet",
+    "ruleId": "synthetic-frobnicator-policy",
+    "appliedPolicies": [
+      "[[20-decision-frames/synthetic-frobnicator-policy.md]]"
+    ]
+  },
+  "proseOnly": {
+    "outcome": "proceed",
+    "selectedOption": "violet",
+    "ruleId": "synthetic-frobnicator-policy",
+    "appliedPolicies": [
+      "[[20-decision-frames/synthetic-frobnicator-policy.md]]"
+    ]
+  },
+  "retired": {
+    "outcome": "ask_user",
+    "selectedOption": null,
+    "ruleId": null,
+    "appliedPolicies": []
+  },
+  "checks": {
+    "beforeAsks": true,
+    "activeChooses": true,
+    "activeNamesOnlyPolicy": true,
+    "proseUnchanged": true,
+    "retiredNoLongerApplies": true
+  }
+}

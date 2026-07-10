@@ -1,0 +1,11 @@
+{
+  "id": "02",
+  "name": "cargo-clippy",
+  "command": "cargo clippy --locked --workspace --all-targets --all-features -- -D warnings ",
+  "cwd": "<SOURCE_ROOT>",
+  "startedAt": "2026-07-10T09:40:47Z",
+  "endedAt": "2026-07-10T09:41:25Z",
+  "elapsedSeconds": 38,
+  "exitCode": 0,
+  "outputBytes": 7245
+}

@@ -1,0 +1,11 @@
+{
+  "id": "06",
+  "name": "cargo-deny",
+  "command": "cargo deny check ",
+  "cwd": "<SOURCE_ROOT>",
+  "startedAt": "2026-07-10T09:43:56Z",
+  "endedAt": "2026-07-10T09:43:59Z",
+  "elapsedSeconds": 3,
+  "exitCode": 0,
+  "outputBytes": 18994
+}

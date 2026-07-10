@@ -1,0 +1,50 @@
+{
+  "dryRunOutput": "install harness dry-run target=codex\n<PROJECT>/.codex/skills/build-decision-engine/SKILL.md (instruction-only)\n<PROJECT>/AGENTS.md (instruction-only)\n<PROJECT>/.codex/config.toml (best-effort)\n<PROJECT>/.codex/hooks.json (enforced)",
+  "installOutput": "wrote <PROJECT>/.codex/skills/build-decision-engine/SKILL.md (instruction-only)\nbackup <PROJECT>/AGENTS.bak-1783677146274411\nwrote <PROJECT>/AGENTS.md (instruction-only)\nwrote <PROJECT>/.codex/config.toml (best-effort)\nwrote <PROJECT>/.codex/hooks.json (enforced)",
+  "secondInstallOutput": "unchanged <PROJECT>/.codex/skills/build-decision-engine/SKILL.md (instruction-only)\nunchanged <PROJECT>/AGENTS.md (instruction-only)\nunchanged <PROJECT>/.codex/config.toml (best-effort)\nunchanged <PROJECT>/.codex/hooks.json (enforced)",
+  "doctor": {
+    "activationRequiresApproval": true,
+    "configurationValid": true,
+    "enforcement": [
+      "instruction-only",
+      "instruction-only",
+      "best-effort",
+      "enforced"
+    ],
+    "executableAvailable": true,
+    "feedbackSupported": true,
+    "gateReachable": true,
+    "healthy": true,
+    "indexValid": true,
+    "installed": true,
+    "mcpVaultConfigured": true,
+    "recordingSupported": true,
+    "supported": true,
+    "target": "codex",
+    "vaultExists": true
+  },
+  "conflictOutput": "error: refusing to overwrite unmanaged file <PROJECT>/.codex/skills/build-decision-engine/SKILL.md; move it or remove it explicitly",
+  "conflictExit": 1,
+  "backupFiles": [
+    "AGENTS.bak-1783677146274411"
+  ],
+  "installedFiles": [
+    ".codex/config.toml",
+    ".codex/hooks.json",
+    ".codex/skills/build-decision-engine/SKILL.md",
+    "AGENTS.bak-1783677146274411",
+    "AGENTS.md"
+  ],
+  "checks": {
+    "dryRunListsSkill": true,
+    "dryRunListsAgents": true,
+    "dryRunListsConfig": true,
+    "dryRunListsHooks": true,
+    "backupCreated": true,
+    "existingContentPreserved": true,
+    "idempotent": true,
+    "doctorHealthy": true,
+    "doctorFullLearningContract": true,
+    "unmanagedOwnedFileProtected": true
+  }
+}

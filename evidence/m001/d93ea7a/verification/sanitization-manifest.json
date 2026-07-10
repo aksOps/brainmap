@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "brainmap-evidence-sanitization-v1",
+  "sourceCommit": "d93ea7ada09043a1422478b60d5f3223037ff8ad",
+  "generatedAt": "2026-07-10T09:47:02Z",
+  "completeCommandOutputs": true,
+  "lineCountsPreserved": true,
+  "forbiddenPathScanPassed": true,
+  "transforms": [
+    {
+      "category": "detached source root",
+      "placeholder": "<SOURCE_ROOT>"
+    },
+    {
+      "category": "evidence output root",
+      "placeholder": "<EVIDENCE_ROOT>"
+    },
+    {
+      "category": "test temporary root",
+      "placeholder": "<TEST_TEMP_ROOT>"
+    },
+    {
+      "category": "Cargo user data root",
+      "placeholder": "<CARGO_HOME>"
+    }
+  ]
+}

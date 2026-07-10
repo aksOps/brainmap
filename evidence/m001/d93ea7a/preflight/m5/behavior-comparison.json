@@ -1,0 +1,56 @@
+{
+  "afterOnboarding": {
+    "outcome": "proceed",
+    "selectedOption": "pnpm",
+    "rejectedOptions": [
+      "npm"
+    ],
+    "ruleId": "upd_1783676900661_2b7c546abaee",
+    "ruleScope": "project:synthetic-alpha",
+    "appliedPolicies": [
+      "[[60-decision-examples/upd_1783676900661_2b7c546abaee.md]]"
+    ]
+  },
+  "beforeCorrectionApproval": {
+    "outcome": "proceed",
+    "selectedOption": "pnpm",
+    "rejectedOptions": [
+      "npm"
+    ],
+    "ruleId": "upd_1783676900661_2b7c546abaee",
+    "ruleScope": "project:synthetic-alpha",
+    "appliedPolicies": [
+      "[[60-decision-examples/upd_1783676900661_2b7c546abaee.md]]"
+    ]
+  },
+  "afterCorrection": {
+    "outcome": "proceed",
+    "selectedOption": "npm",
+    "rejectedOptions": [
+      "pnpm"
+    ],
+    "ruleId": "upd_1783676900757_10bfaeeb03b2",
+    "ruleScope": "project:synthetic-alpha",
+    "appliedPolicies": [
+      "[[60-decision-examples/upd_1783676900757_10bfaeeb03b2.md]]"
+    ]
+  },
+  "unrelated": {
+    "outcome": "ask_user",
+    "selectedOption": null,
+    "rejectedOptions": [
+      "npm",
+      "pnpm"
+    ],
+    "ruleId": null,
+    "ruleScope": null,
+    "appliedPolicies": []
+  },
+  "checks": {
+    "onboardingSelectsPnmp": true,
+    "previewDoesNotActivate": true,
+    "correctionChangesNext": true,
+    "scopePreserved": true,
+    "unrelatedDoesNotLeak": true
+  }
+}

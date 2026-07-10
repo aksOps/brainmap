@@ -1,0 +1,11 @@
+{
+  "id": "04",
+  "name": "cargo-release-build",
+  "command": "cargo build --release --locked --bin brainmap --bin brainmapd ",
+  "cwd": "<SOURCE_ROOT>",
+  "startedAt": "2026-07-10T09:42:24Z",
+  "endedAt": "2026-07-10T09:43:35Z",
+  "elapsedSeconds": 71,
+  "exitCode": 0,
+  "outputBytes": 7235
+}

@@ -1,0 +1,11 @@
+{
+  "id": "00",
+  "name": "environment",
+  "command": "bash -lc git\\ rev-parse\\ HEAD\\;\\ git\\ status\\ --porcelain\\ --untracked-files=all\\;\\ rustc\\ --version\\ --verbose\\;\\ cargo\\ --version\\ --verbose\\;\\ cargo\\ audit\\ --version\\;\\ cargo\\ deny\\ --version\\;\\ cargo\\ cyclonedx\\ --version\\;\\ node\\ --version\\;\\ npm\\ --version\\;\\ shellcheck\\ --version\\;\\ actionlint\\ --version\\;\\ uname\\ -a ",
+  "cwd": "<SOURCE_ROOT>",
+  "startedAt": "2026-07-10T09:40:46Z",
+  "endedAt": "2026-07-10T09:40:46Z",
+  "elapsedSeconds": 0,
+  "exitCode": 0,
+  "outputBytes": 1009
+}

@@ -1,0 +1,20 @@
+{
+  "decisionId": "dec_1783676900722_1fae8187c426",
+  "recordOutput": "recorded decision",
+  "feedbackOutput": "created high-strength update packet upd_1783676900757_10bfaeeb03b2",
+  "pendingTreeHashBeforePreview": "0b035accba71b2e59711657985d34c78a651d429f4d3153e50d89644dddfdb7a",
+  "pendingTreeHashAfterPreview": "d4c972b2b63bb678994de344cb8a8f699151ab9001cbe794a698e13ef60d7eb3",
+  "previewOutput": "would apply upd_1783676900757_10bfaeeb03b2: when \"Choose synthetic package manager for local alpha project\", choose \"npm\", scope=project:synthetic-alpha\napplied 0 packet(s)",
+  "approvalOutput": "applied 1 packet(s)",
+  "secondApplyOutput": "applied 0 packet(s)",
+  "checks": {
+    "recorded": true,
+    "feedbackPacketCreated": true,
+    "previewShowsSituation": true,
+    "previewShowsChoice": true,
+    "previewShowsScope": true,
+    "previewDoesNotMutate": false,
+    "approvedOne": true,
+    "secondApplyIdempotent": true
+  }
+}

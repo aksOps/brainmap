@@ -1,0 +1,36 @@
+{
+  "decisionId": "dec_1783676900722_1fae8187c426",
+  "outcome": "proceed",
+  "recommendation": "Proceed with pnpm; it matches a learned decision.",
+  "selectedOption": "pnpm",
+  "rejectedOptions": [
+    "npm"
+  ],
+  "confidence": 0.97,
+  "ruleId": "upd_1783676900661_2b7c546abaee",
+  "ruleScope": "project:synthetic-alpha",
+  "matchScore": 1.0,
+  "matchKind": "exact",
+  "candidateCollision": false,
+  "riskTier": "reversible_auto",
+  "reasoningSummary": [
+    "Applied deterministic policy precedence.",
+    "Applied compiled learned decision rule with score 1.00."
+  ],
+  "matchedPolicies": [
+    "[[60-decision-examples/upd_1783676900661_2b7c546abaee.md]]"
+  ],
+  "appliedPolicies": [
+    "[[60-decision-examples/upd_1783676900661_2b7c546abaee.md]]"
+  ],
+  "restrictionsApplied": [],
+  "askUserQuestion": null,
+  "defaultIfNoAnswer": null,
+  "learningEvent": {
+    "chosen": "pnpm",
+    "confidence": 0.97,
+    "kind": "decision-gate",
+    "shouldRecord": true,
+    "situation": "Choose synthetic package manager for local alpha project"
+  }
+}

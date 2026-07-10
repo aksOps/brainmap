@@ -1,0 +1,11 @@
+{
+  "sourceCommit": "d93ea7ada09043a1422478b60d5f3223037ff8ad",
+  "profile": "release",
+  "locked": true,
+  "brainmapSha256": "d22e00e5d4681fbcd68c6ca9717f3e82e4e984c28cf2802685ccce86f3796cb2",
+  "brainmapdSha256": "f8a94343f12f20dc6344686934f114deda15ebea0c4f2d9ebea0e2ad03b2c078",
+  "host": "Linux 6.8.0-134-generic x86_64",
+  "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+  "syntheticData": true,
+  "realHost": false
+}

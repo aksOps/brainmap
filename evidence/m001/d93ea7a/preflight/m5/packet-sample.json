@@ -1,0 +1,47 @@
+{
+  "id": "upd_1783676900757_10bfaeeb03b2",
+  "source": {
+    "confidence": 0.7,
+    "kind": "harness"
+  },
+  "classification": "corrected-decision",
+  "claim": "choose npm; rejected pnpm",
+  "evidence": [
+    {
+      "quoteOrSummary": "choose npm; rejected pnpm",
+      "sourceRef": "harness",
+      "strength": "very-strong"
+    }
+  ],
+  "targetNotes": [
+    "[[20-decision-frames/learning-decisions.md]]"
+  ],
+  "suggestedLinks": [
+    "[[70-question-triggers/ask-when-uncertain.md]]"
+  ],
+  "confidence": 0.95,
+  "sensitivity": "personal",
+  "action": "create",
+  "humanQuestion": null,
+  "decisionRule": {
+    "situation": "Choose synthetic package manager for local alpha project",
+    "decision_type": "tooling",
+    "scope": "project:synthetic-alpha",
+    "options": [
+      "npm",
+      "pnpm"
+    ],
+    "chosen": "npm",
+    "rejected": [
+      "pnpm"
+    ]
+  },
+  "status": "pending",
+  "checks": {
+    "correctedClassification": true,
+    "personalNotSecret": true,
+    "scopePreserved": true,
+    "choiceExplicit": true,
+    "rejectionExplicit": true
+  }
+}

@@ -1,0 +1,246 @@
+{
+  "schemaVersion": "brainmap-verification-evidence-v1",
+  "sourceCommit": "d93ea7ada09043a1422478b60d5f3223037ff8ad",
+  "generatedAt": "2026-07-10T09:46:08Z",
+  "allPassed": true,
+  "gateCount": 20,
+  "gates": [
+    {
+      "id": "00",
+      "name": "environment",
+      "command": "bash -lc git\\ rev-parse\\ HEAD\\;\\ git\\ status\\ --porcelain\\ --untracked-files=all\\;\\ rustc\\ --version\\ --verbose\\;\\ cargo\\ --version\\ --verbose\\;\\ cargo\\ audit\\ --version\\;\\ cargo\\ deny\\ --version\\;\\ cargo\\ cyclonedx\\ --version\\;\\ node\\ --version\\;\\ npm\\ --version\\;\\ shellcheck\\ --version\\;\\ actionlint\\ --version\\;\\ uname\\ -a ",
+      "cwd": "<SOURCE_ROOT>",
+      "startedAt": "2026-07-10T09:40:46Z",
+      "endedAt": "2026-07-10T09:40:46Z",
+      "elapsedSeconds": 0,
+      "exitCode": 0,
+      "outputBytes": 1009
+    },
+    {
+      "id": "01",
+      "name": "cargo-fmt",
+      "command": "cargo fmt --all --check ",
+      "cwd": "<SOURCE_ROOT>",
+      "startedAt": "2026-07-10T09:40:46Z",
+      "endedAt": "2026-07-10T09:40:46Z",
+      "elapsedSeconds": 0,
+      "exitCode": 0,
+      "outputBytes": 0
+    },
+    {
+      "id": "02",
+      "name": "cargo-clippy",
+      "command": "cargo clippy --locked --workspace --all-targets --all-features -- -D warnings ",
+      "cwd": "<SOURCE_ROOT>",
+      "startedAt": "2026-07-10T09:40:47Z",
+      "endedAt": "2026-07-10T09:41:25Z",
+      "elapsedSeconds": 38,
+      "exitCode": 0,
+      "outputBytes": 7245
+    },
+    {
+      "id": "03",
+      "name": "cargo-test",
+      "command": "cargo test --locked --workspace --all-targets --all-features ",
+      "cwd": "<SOURCE_ROOT>",
+      "startedAt": "2026-07-10T09:41:25Z",
+      "endedAt": "2026-07-10T09:42:24Z",
+      "elapsedSeconds": 59,
+      "exitCode": 0,
+      "outputBytes": 33925
+    },
+    {
+      "id": "04",
+      "name": "cargo-release-build",
+      "command": "cargo build --release --locked --bin brainmap --bin brainmapd ",
+      "cwd": "<SOURCE_ROOT>",
+      "startedAt": "2026-07-10T09:42:24Z",
+      "endedAt": "2026-07-10T09:43:35Z",
+      "elapsedSeconds": 71,
+      "exitCode": 0,
+      "outputBytes": 7235
+    },
+    {
+      "id": "05",
+      "name": "cargo-audit",
+      "command": "cargo audit ",
+      "cwd": "<SOURCE_ROOT>",
+      "startedAt": "2026-07-10T09:43:52Z",
+      "endedAt": "2026-07-10T09:43:56Z",
+      "elapsedSeconds": 4,
+      "exitCode": 0,
+      "outputBytes": 950
+    },
+    {
+      "id": "06",
+      "name": "cargo-deny",
+      "command": "cargo deny check ",
+      "cwd": "<SOURCE_ROOT>",
+      "startedAt": "2026-07-10T09:43:56Z",
+      "endedAt": "2026-07-10T09:43:59Z",
+      "elapsedSeconds": 3,
+      "exitCode": 0,
+      "outputBytes": 18994
+    },
+    {
+      "id": "07",
+      "name": "crossbeam-tree",
+      "command": "cargo tree --locked -i crossbeam-epoch ",
+      "cwd": "<SOURCE_ROOT>",
+      "startedAt": "2026-07-10T09:43:59Z",
+      "endedAt": "2026-07-10T09:43:59Z",
+      "elapsedSeconds": 0,
+      "exitCode": 0,
+      "outputBytes": 411
+    },
+    {
+      "id": "08",
+      "name": "sbom-generate",
+      "command": "scripts/generate-sbom.sh ",
+      "cwd": "<SOURCE_ROOT>",
+      "startedAt": "2026-07-10T09:43:59Z",
+      "endedAt": "2026-07-10T09:44:00Z",
+      "elapsedSeconds": 1,
+      "exitCode": 0,
+      "outputBytes": 0
+    },
+    {
+      "id": "09",
+      "name": "sbom-unchanged",
+      "command": "git diff --exit-code -- crates/brainmap-cli/brainmap.json ",
+      "cwd": "<SOURCE_ROOT>",
+      "startedAt": "2026-07-10T09:44:00Z",
+      "endedAt": "2026-07-10T09:44:00Z",
+      "elapsedSeconds": 0,
+      "exitCode": 0,
+      "outputBytes": 0
+    },
+    {
+      "id": "10",
+      "name": "cargo-package",
+      "command": "cargo package --locked -p brainmap-cli ",
+      "cwd": "<SOURCE_ROOT>",
+      "startedAt": "2026-07-10T09:44:00Z",
+      "endedAt": "2026-07-10T09:44:13Z",
+      "elapsedSeconds": 13,
+      "exitCode": 0,
+      "outputBytes": 416
+    },
+    {
+      "id": "11",
+      "name": "release-qualification",
+      "command": "env BRAINMAP_QUALIFICATION_OUT=<EVIDENCE_ROOT>/qualification scripts/release-qualification.sh ",
+      "cwd": "<SOURCE_ROOT>",
+      "startedAt": "2026-07-10T09:44:13Z",
+      "endedAt": "2026-07-10T09:44:34Z",
+      "elapsedSeconds": 21,
+      "exitCode": 0,
+      "outputBytes": 85
+    },
+    {
+      "id": "12",
+      "name": "npm-prepare",
+      "command": "scripts/prepare-npm-package.sh ",
+      "cwd": "<SOURCE_ROOT>",
+      "startedAt": "2026-07-10T09:44:54Z",
+      "endedAt": "2026-07-10T09:44:54Z",
+      "elapsedSeconds": 0,
+      "exitCode": 0,
+      "outputBytes": 0
+    },
+    {
+      "id": "13",
+      "name": "npm-test",
+      "command": "npm test --prefix npm/brainmap ",
+      "cwd": "<SOURCE_ROOT>",
+      "startedAt": "2026-07-10T09:44:54Z",
+      "endedAt": "2026-07-10T09:44:54Z",
+      "elapsedSeconds": 0,
+      "exitCode": 0,
+      "outputBytes": 116
+    },
+    {
+      "id": "14",
+      "name": "npm-pack-dry-run",
+      "command": "npm pack --dry-run ./npm/brainmap ",
+      "cwd": "<SOURCE_ROOT>",
+      "startedAt": "2026-07-10T09:44:54Z",
+      "endedAt": "2026-07-10T09:44:56Z",
+      "elapsedSeconds": 2,
+      "exitCode": 0,
+      "outputBytes": 583
+    },
+    {
+      "id": "15",
+      "name": "bash-syntax",
+      "command": "bash -n scripts/generate-sbom.sh scripts/prepare-npm-package.sh scripts/release-qualification.sh ",
+      "cwd": "<SOURCE_ROOT>",
+      "startedAt": "2026-07-10T09:44:56Z",
+      "endedAt": "2026-07-10T09:44:56Z",
+      "elapsedSeconds": 0,
+      "exitCode": 0,
+      "outputBytes": 0
+    },
+    {
+      "id": "16",
+      "name": "shellcheck",
+      "command": "shellcheck scripts/generate-sbom.sh scripts/prepare-npm-package.sh scripts/release-qualification.sh ",
+      "cwd": "<SOURCE_ROOT>",
+      "startedAt": "2026-07-10T09:44:56Z",
+      "endedAt": "2026-07-10T09:44:57Z",
+      "elapsedSeconds": 1,
+      "exitCode": 0,
+      "outputBytes": 0
+    },
+    {
+      "id": "17",
+      "name": "actionlint",
+      "command": "actionlint .github/workflows/ci.yml .github/workflows/release.yml ",
+      "cwd": "<SOURCE_ROOT>",
+      "startedAt": "2026-07-10T09:44:57Z",
+      "endedAt": "2026-07-10T09:44:57Z",
+      "elapsedSeconds": 0,
+      "exitCode": 0,
+      "outputBytes": 0
+    },
+    {
+      "id": "18",
+      "name": "tracked-tree-clean",
+      "command": "git diff --exit-code ",
+      "cwd": "<SOURCE_ROOT>",
+      "startedAt": "2026-07-10T09:44:57Z",
+      "endedAt": "2026-07-10T09:44:57Z",
+      "elapsedSeconds": 0,
+      "exitCode": 0,
+      "outputBytes": 0
+    },
+    {
+      "id": "19",
+      "name": "final-worktree-status",
+      "command": "git status --porcelain --untracked-files=all ",
+      "cwd": "<SOURCE_ROOT>",
+      "startedAt": "2026-07-10T09:44:57Z",
+      "endedAt": "2026-07-10T09:44:57Z",
+      "elapsedSeconds": 0,
+      "exitCode": 0,
+      "outputBytes": 0
+    }
+  ],
+  "qualification": {
+    "schemaVersion": "brainmap-release-qualification-v1",
+    "sourceCommit": "d93ea7ada09043a1422478b60d5f3223037ff8ad",
+    "sourceTreeDirty": false,
+    "startedAt": "2026-07-10T09:44:13Z",
+    "completedAt": "2026-07-10T09:44:34Z",
+    "host": "Linux 6.8.0-134-generic x86_64",
+    "toolchain": {
+      "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+      "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)"
+    },
+    "binaries": {
+      "brainmapSha256": "cb0f6ed0f544880b5c526b619de16af25ff5cd7cfa7db6eae3c6e3c69a8df75d",
+      "brainmapdSha256": "f8a94343f12f20dc6344686934f114deda15ebea0c4f2d9ebea0e2ad03b2c078"
+    },
+    "portableArchiveSha256": "01226334d773302b356e9b68ed0cc3a8e5f3abf18dcfe54312a5e924e22e37f8"
+  }
+}

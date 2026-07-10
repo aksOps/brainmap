@@ -1,0 +1,6 @@
+   Packaging brainmap-cli v0.1.0 (<SOURCE_ROOT>/crates/brainmap-cli)
+    Updating crates.io index
+    Packaged 33 files, 895.0KiB (170.2KiB compressed)
+   Verifying brainmap-cli v0.1.0 (<SOURCE_ROOT>/crates/brainmap-cli)
+   Compiling brainmap-cli v0.1.0 (<SOURCE_ROOT>/target/package/brainmap-cli-0.1.0)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.08s

@@ -1,0 +1,36 @@
+{
+  "decisionId": "dec_1783677122146_b49a8b641e39",
+  "outcome": "proceed",
+  "recommendation": "Proceed with Markdown+JSONL; it matches a learned decision.",
+  "selectedOption": "Markdown+JSONL",
+  "rejectedOptions": [
+    "External Vector DB"
+  ],
+  "confidence": 0.97,
+  "ruleId": "20-decision-frames-architecture-decisions",
+  "ruleScope": "global",
+  "matchScore": 1.0,
+  "matchKind": "exact",
+  "candidateCollision": false,
+  "riskTier": "reversible_auto",
+  "reasoningSummary": [
+    "Applied deterministic policy precedence.",
+    "Applied compiled learned decision rule with score 1.00."
+  ],
+  "matchedPolicies": [
+    "[[20-decision-frames/architecture-decisions.md]]"
+  ],
+  "appliedPolicies": [
+    "[[20-decision-frames/architecture-decisions.md]]"
+  ],
+  "restrictionsApplied": [],
+  "askUserQuestion": null,
+  "defaultIfNoAnswer": null,
+  "learningEvent": {
+    "chosen": "Markdown+JSONL",
+    "confidence": 0.97,
+    "kind": "decision-gate",
+    "shouldRecord": true,
+    "situation": "Choose v1 storage"
+  }
+}

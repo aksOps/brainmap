@@ -1,0 +1,9 @@
+{
+  "sourceCommit": "d93ea7ada09043a1422478b60d5f3223037ff8ad",
+  "worktree": "<DETACHED_WORKTREE>",
+  "cargoTargetDir": "<unset>",
+  "buildCommand": "cargo build --release --locked -p brainmap-cli --bin brainmap --bin brainmapd",
+  "hashTiming": "after successful isolated build; before all drills",
+  "brainmapSha256": "d22e00e5d4681fbcd68c6ca9717f3e82e4e984c28cf2802685ccce86f3796cb2",
+  "brainmapdSha256": "f8a94343f12f20dc6344686934f114deda15ebea0c4f2d9ebea0e2ad03b2c078"
+}

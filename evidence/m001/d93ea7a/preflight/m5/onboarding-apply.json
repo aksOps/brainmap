@@ -1,0 +1,7 @@
+{
+  "output": "onboarding schema: brainmap-onboarding-v1\nonboarding exact executable update preview: {\"packet\":{\"action\":\"create\",\"claim\":\"When Choose synthetic package manager for local alpha project, choose pnpm; rejected npm; rationale Use a deterministic local package manager\",\"classification\":\"decision-example\",\"confidence\":0.7,\"createdAt\":\"2026-07-10T09:46:43Z\",\"decisionRule\":{\"chosen\":\"pnpm\",\"decision_type\":\"tooling\",\"options\":[\"npm\",\"pnpm\"],\"rejected\":[\"npm\"],\"scope\":\"project:synthetic-alpha\",\"situation\":\"Choose synthetic package manager for local alpha project\"},\"evidence\":[{\"quoteOrSummary\":\"When Choose synthetic package manager for local alpha project, choose pnpm; rejected npm; rationale Use a deterministic local package manager\",\"sourceRef\":\"manual\",\"strength\":\"strong\"}],\"humanQuestion\":null,\"id\":\"upd_1783676803346_394a3c930b59\",\"sensitivity\":\"personal\",\"source\":{\"confidence\":0.7,\"kind\":\"manual\"},\"status\":\"pending\",\"suggestedLinks\":[\"[[70-question-triggers/ask-when-uncertain.md]]\"],\"targetNotes\":[\"[[20-decision-frames/learning-decisions.md]]\"]},\"path\":\"99-meta/pending-update-packets/manual-decision-upd_1783676803346_394a3c930b59.json\"}\napplied 1 packet(s)\nonboarding applied 1 decision(s); kept 0 answer(s) pending clarification",
+  "checks": {
+    "exactPreview": true,
+    "appliedOne": true
+  }
+}

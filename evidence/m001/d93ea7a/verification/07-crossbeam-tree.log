@@ -1,0 +1,9 @@
+crossbeam-epoch v0.9.20
+└── crossbeam-deque v0.8.6
+    └── rayon-core v1.13.0
+        └── rayon v1.12.0
+            ├── rayon-cond v0.4.0
+            │   └── tokenizers v0.21.4
+            │       └── model2vec-rs v0.2.1
+            │           └── brainmap-cli v0.1.0 (<SOURCE_ROOT>/crates/brainmap-cli)
+            └── tokenizers v0.21.4 (*)

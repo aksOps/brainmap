@@ -1,0 +1,24 @@
+{
+  "routine": {
+    "exitCode": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  "dangerous": {
+    "exitCode": 2,
+    "stdout": "",
+    "stderr": "Action rejected: Blocked by hard-no or never-auto policy."
+  },
+  "userPrompt": {
+    "exitCode": 0,
+    "stdout": "No need to ask this question.",
+    "stderr": ""
+  },
+  "checks": {
+    "routineAllowed": true,
+    "dangerousStopped": true,
+    "dangerousExplained": true,
+    "promptNotEnforced": true,
+    "promptAdviceOnly": true
+  }
+}

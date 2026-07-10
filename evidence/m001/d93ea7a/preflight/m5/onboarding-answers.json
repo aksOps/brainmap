@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "brainmap-onboarding-v1",
+  "decisions": [
+    {
+      "situation": "Choose synthetic package manager for local alpha project",
+      "decisionType": "tooling",
+      "scope": "project:synthetic-alpha",
+      "options": [
+        "npm",
+        "pnpm"
+      ],
+      "chosen": "pnpm",
+      "rejected": [
+        "npm"
+      ],
+      "rationale": "Use a deterministic local package manager"
+    }
+  ]
+}

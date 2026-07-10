@@ -1,0 +1,36 @@
+{
+  "decisionId": "dec_1783676669787_5ef5269b2bc8",
+  "outcome": "proceed",
+  "recommendation": "Proceed with biome; it matches a learned decision.",
+  "selectedOption": "biome",
+  "rejectedOptions": [
+    "prettier"
+  ],
+  "confidence": 0.97,
+  "ruleId": "upd_1783676669410_217bcf0e7e51",
+  "ruleScope": "project:release-qualification",
+  "matchScore": 1.0,
+  "matchKind": "exact",
+  "candidateCollision": false,
+  "riskTier": "reversible_auto",
+  "reasoningSummary": [
+    "Applied deterministic policy precedence.",
+    "Applied compiled learned decision rule with score 1.00."
+  ],
+  "matchedPolicies": [
+    "[[60-decision-examples/upd_1783676669410_217bcf0e7e51.md]]"
+  ],
+  "appliedPolicies": [
+    "[[60-decision-examples/upd_1783676669410_217bcf0e7e51.md]]"
+  ],
+  "restrictionsApplied": [],
+  "askUserQuestion": null,
+  "defaultIfNoAnswer": null,
+  "learningEvent": {
+    "chosen": "biome",
+    "confidence": 0.97,
+    "kind": "decision-gate",
+    "shouldRecord": false,
+    "situation": "Choose formatter for release qualification"
+  }
+}
