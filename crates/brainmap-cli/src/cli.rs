@@ -533,6 +533,20 @@ pub struct RestoreArgs {
     pub to: PathBuf,
     #[arg(long)]
     pub identity: Option<PathBuf>,
+    #[arg(long, value_enum, hide = true)]
+    pub fault_phase: Option<RestoreFaultPhase>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum RestoreFaultPhase {
+    Verified,
+    StagingCreated,
+    FilesWritten,
+    IndexRebuilt,
+    LinksChecked,
+    GateChecked,
+    ExistingBackedUp,
+    StagingActivated,
 }
 
 #[derive(Args)]

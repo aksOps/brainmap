@@ -9,6 +9,7 @@ use std::path::{Component, Path, PathBuf};
 use tar::{Archive, Builder, Header};
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Manifest {
     format: String,
     #[serde(rename = "formatVersion")]
@@ -32,6 +33,7 @@ struct Manifest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ManifestFile {
     path: String,
     sha256: String,
@@ -39,7 +41,7 @@ struct ManifestFile {
 
 pub fn export_cmd(args: ExportArgs) -> Result<()> {
     let root = vault::resolve_vault(args.vault);
-    let _lock = util::FileLock::acquire(&root.join(".brainmap/locks"), "vault-maintenance.lock")?;
+    let _lock = util::acquire_vault_maintenance(&root)?;
     if args.encrypt || matches!(args.mode, ExportMode::Encrypted) {
         let recipient = args
             .recipient
@@ -84,6 +86,12 @@ fn archive_bytes(root: &Path, mode: ExportMode, encrypted: bool) -> Result<Vec<u
         if should_skip(&rel, &mode) {
             continue;
         }
+        if privacy::contains_secret(&rel) {
+            if matches!(mode, ExportMode::ShareSafe) {
+                continue;
+            }
+            bail!("refusing to export secret-like archive path: {rel}");
+        }
         let source_bytes = fs::read(&path)?;
         if export_file_is_secret(&source_bytes) {
             if matches!(mode, ExportMode::ShareSafe) {
@@ -115,7 +123,7 @@ fn archive_bytes(root: &Path, mode: ExportMode, encrypted: bool) -> Result<Vec<u
         created_at: util::now_iso(),
         brainmap_version: env!("CARGO_PKG_VERSION").into(),
         export_mode: format!("{mode:?}").to_lowercase(),
-        schema_version: "decision-engine-v3".into(),
+        schema_version: index::COMPILED_SCHEMA_VERSION.into(),
         includes_indexes: matches!(mode, ExportMode::Full),
         includes_embeddings: matches!(mode, ExportMode::Full),
         includes_private_notes: !matches!(mode, ExportMode::ShareSafe),
@@ -137,10 +145,8 @@ fn archive_bytes(root: &Path, mode: ExportMode, encrypted: bool) -> Result<Vec<u
 }
 
 fn export_file_is_secret(bytes: &[u8]) -> bool {
-    let Ok(text) = std::str::from_utf8(bytes) else {
-        return false;
-    };
-    privacy::contains_secret(text)
+    let text = String::from_utf8_lossy(bytes);
+    privacy::contains_secret(&text)
         || text.lines().any(|line| {
             line.split_once(':').is_some_and(|(key, value)| {
                 key.trim().eq_ignore_ascii_case("sensitivity")
@@ -203,6 +209,9 @@ fn verify_archive(file: &Path, identity: Option<&Path>) -> Result<VerifiedArchiv
     let mut archive_collision_keys = HashSet::new();
     let mut entry_bytes = HashMap::new();
     for (path, bytes) in &entries {
+        if path != "manifest.json" && privacy::contains_secret(path) {
+            bail!("refusing secret-like archive path: {path}");
+        }
         if !archive_paths.insert(path.as_str()) {
             bail!("duplicate archive entry: {path}");
         }
@@ -228,7 +237,7 @@ fn verify_archive(file: &Path, identity: Option<&Path>) -> Result<VerifiedArchiv
     }
     if !matches!(
         manifest.schema_version.as_str(),
-        "decision-engine-v2" | "decision-engine-v3"
+        "decision-engine-v2" | "decision-engine-v3" | "decision-engine-v4"
     ) {
         bail!(
             "unsupported decision engine schema: {}",
@@ -239,6 +248,9 @@ fn verify_archive(file: &Path, identity: Option<&Path>) -> Result<VerifiedArchiv
     let mut manifest_collision_keys = HashSet::new();
     for file in &manifest.files {
         let normalized_path = util::normalize_archive_path(Path::new(&file.path))?;
+        if privacy::contains_secret(&normalized_path) {
+            bail!("refusing secret-like archive path: {}", file.path);
+        }
         if normalized_path == "manifest.json" {
             bail!("manifest.json cannot list itself");
         }
@@ -260,6 +272,9 @@ fn verify_archive(file: &Path, identity: Option<&Path>) -> Result<VerifiedArchiv
         if got != file.sha256 {
             bail!("checksum mismatch for {}", file.path);
         }
+    }
+    if export_file_is_secret(manifest_bytes) {
+        bail!("refusing secret-like archive manifest metadata");
     }
     for path in archive_paths {
         if path != "manifest.json" && !manifest_paths.contains(path) {
@@ -315,7 +330,12 @@ pub fn import_cmd(args: ImportArgs) -> Result<()> {
 }
 
 pub fn restore_cmd(args: RestoreArgs) -> Result<()> {
-    restore_archive(&args.file, &args.to, args.identity.as_deref())
+    restore_archive_with_fault(
+        &args.file,
+        &args.to,
+        args.identity.as_deref(),
+        args.fault_phase.map(RestorePhase::from),
+    )
 }
 
 fn restore_archive(file: &Path, to: &Path, identity: Option<&Path>) -> Result<()> {
@@ -334,6 +354,22 @@ enum RestorePhase {
     StagingActivated,
 }
 
+impl From<crate::cli::RestoreFaultPhase> for RestorePhase {
+    fn from(value: crate::cli::RestoreFaultPhase) -> Self {
+        use crate::cli::RestoreFaultPhase;
+        match value {
+            RestoreFaultPhase::Verified => Self::Verified,
+            RestoreFaultPhase::StagingCreated => Self::StagingCreated,
+            RestoreFaultPhase::FilesWritten => Self::FilesWritten,
+            RestoreFaultPhase::IndexRebuilt => Self::IndexRebuilt,
+            RestoreFaultPhase::LinksChecked => Self::LinksChecked,
+            RestoreFaultPhase::GateChecked => Self::GateChecked,
+            RestoreFaultPhase::ExistingBackedUp => Self::ExistingBackedUp,
+            RestoreFaultPhase::StagingActivated => Self::StagingActivated,
+        }
+    }
+}
+
 fn restore_archive_with_fault(
     file: &Path,
     to: &Path,
@@ -342,22 +378,47 @@ fn restore_archive_with_fault(
 ) -> Result<()> {
     let verified = verify_archive(file, identity)?;
     fail_restore_at(RestorePhase::Verified, fault)?;
-    let target = util::expand_tilde(to);
+    let target = restore_target_path(to)?;
     let parent = target.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
+    let _lock = util::acquire_vault_maintenance(&target)?;
+    restore_verified_archive_with_fault(verified, &target, fault)
+}
+
+pub(crate) fn restore_archive_with_guard(
+    file: &Path,
+    to: &Path,
+    identity: Option<&Path>,
+    guard: &util::VaultMaintenanceGuard,
+) -> Result<()> {
+    let target = restore_target_path(to)?;
+    guard.require_target(&target)?;
+    let verified = verify_archive(file, identity)?;
+    let parent = target.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    restore_verified_archive_with_fault(verified, &target, None)
+}
+
+fn restore_target_path(to: &Path) -> Result<PathBuf> {
+    let expanded = util::expand_tilde(to);
+    if fs::symlink_metadata(&expanded).is_ok() {
+        return expanded
+            .canonicalize()
+            .with_context(|| format!("resolve restore target {}", expanded.display()));
+    }
+    Ok(expanded)
+}
+
+fn restore_verified_archive_with_fault(
+    verified: VerifiedArchive,
+    target: &Path,
+    fault: Option<RestorePhase>,
+) -> Result<()> {
+    let parent = target.parent().unwrap_or_else(|| Path::new("."));
     let target_name = target
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("BrainMap");
-    let lock_key = util::sha256_hex(target.to_string_lossy().as_bytes());
-    let _lock = util::FileLock::acquire(
-        &parent.join(".brainmap-restore-locks"),
-        &format!("{}.lock", &lock_key[..16]),
-    )?;
-    let _target_lock = target
-        .exists()
-        .then(|| util::FileLock::acquire(&target.join(".brainmap/locks"), "vault-maintenance.lock"))
-        .transpose()?;
     let operation_id = util::id("restore", target_name);
     let staging = parent.join(format!(".{target_name}.{operation_id}.staging"));
     let backup = parent.join(format!(".{target_name}.{operation_id}.backup"));
@@ -408,7 +469,7 @@ fn restore_archive_with_fault(
 
     let had_existing_target = target.exists();
     if had_existing_target {
-        fs::rename(&target, &backup).with_context(|| {
+        fs::rename(target, &backup).with_context(|| {
             format!(
                 "move existing vault {} to backup {}",
                 target.display(),
@@ -417,12 +478,12 @@ fn restore_archive_with_fault(
         })?;
     }
     if let Err(error) = fail_restore_at(RestorePhase::ExistingBackedUp, fault) {
-        rollback_restore_swap(&target, &staging, &backup, had_existing_target)?;
+        rollback_restore_swap(target, &staging, &backup, had_existing_target)?;
         return Err(error);
     }
 
-    if let Err(error) = fs::rename(&staging, &target) {
-        rollback_restore_swap(&target, &staging, &backup, had_existing_target)?;
+    if let Err(error) = fs::rename(&staging, target) {
+        rollback_restore_swap(target, &staging, &backup, had_existing_target)?;
         return Err(error).with_context(|| {
             format!(
                 "activate staged vault {} at {}",
@@ -552,6 +613,79 @@ mod tests {
                 .join("Restored/.brainmap/brainmap.sqlite")
                 .exists()
         );
+    }
+
+    #[test]
+    fn index_snapshot_and_restore_share_the_external_maintenance_lock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+        index::rebuild(&root).unwrap();
+        let archive = tmp.path().join("source.brainmap.tar.zst");
+        export_archive(&root, &archive, ExportMode::Portable).unwrap();
+        let _lock = util::acquire_vault_maintenance(&root).unwrap();
+
+        let index_error = index::rebuild_cmd(Some(root.clone())).unwrap_err();
+        assert!(index_error.to_string().contains("lock already held"));
+        let snapshot_error = crate::snapshot::create(Some(root.clone())).unwrap_err();
+        assert!(snapshot_error.to_string().contains("lock already held"));
+        let restore_error = restore_cmd(RestoreArgs {
+            file: archive,
+            to: root,
+            identity: None,
+            fault_phase: None,
+        })
+        .unwrap_err();
+        assert!(restore_error.to_string().contains("lock already held"));
+    }
+
+    #[test]
+    fn guarded_restore_rejects_a_guard_for_another_vault() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("Source");
+        let target = tmp.path().join("Target");
+        let other = tmp.path().join("Other");
+        vault::init_vault(Some(source.clone()), false, true).unwrap();
+        let archive = tmp.path().join("source.brainmap.tar.zst");
+        export_archive(&source, &archive, ExportMode::Portable).unwrap();
+        let guard = util::acquire_vault_maintenance(&other).unwrap();
+
+        let error = restore_archive_with_guard(&archive, &target, None, &guard).unwrap_err();
+        assert!(error.to_string().contains("maintenance guard protects"));
+        assert!(!target.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restore_through_a_symlink_preserves_the_alias_and_replaces_the_real_vault() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("Source");
+        let real_target = tmp.path().join("Target");
+        let alias_target = tmp.path().join("TargetAlias");
+        vault::init_vault(Some(source.clone()), false, true).unwrap();
+        fs::write(source.join("restored-marker.md"), "restored").unwrap();
+        index::rebuild(&source).unwrap();
+        let archive = tmp.path().join("source.brainmap.tar.zst");
+        export_archive(&source, &archive, ExportMode::Portable).unwrap();
+
+        vault::init_vault(Some(real_target.clone()), false, true).unwrap();
+        fs::write(real_target.join("original-marker.md"), "original").unwrap();
+        index::rebuild(&real_target).unwrap();
+        symlink(&real_target, &alias_target).unwrap();
+
+        restore_archive(&archive, &alias_target, None).unwrap();
+
+        assert!(
+            fs::symlink_metadata(&alias_target)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(real_target.join("restored-marker.md").exists());
+        assert!(!real_target.join("original-marker.md").exists());
+        assert!(index::status(&real_target).unwrap().valid);
     }
 
     #[test]
@@ -710,6 +844,41 @@ mod tests {
     }
 
     #[test]
+    fn exports_reject_secret_like_non_utf8_content() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+        let mut content = vec![0xff, b'\n'];
+        content.extend_from_slice(b"api_key=abcdef1234567890\n");
+        fs::write(root.join("binary-note.bin"), content).unwrap();
+
+        for mode in [ExportMode::Portable, ExportMode::Full] {
+            let error = archive_bytes(&root, mode, false).unwrap_err();
+            assert!(error.to_string().contains("refusing to export secret"));
+        }
+        let share_safe = archive_bytes(&root, ExportMode::ShareSafe, false).unwrap();
+        let entries = read_archive_bytes(&share_safe).unwrap();
+        assert!(entries.iter().all(|(path, _)| path != "binary-note.bin"));
+    }
+
+    #[test]
+    fn exports_reject_secret_like_archive_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+        let secret_path = "api_key=abcdef1234567890.md";
+        fs::write(root.join(secret_path), b"benign body").unwrap();
+
+        for mode in [ExportMode::Portable, ExportMode::Full] {
+            let error = archive_bytes(&root, mode, false).unwrap_err();
+            assert!(error.to_string().contains("secret-like archive path"));
+        }
+        let share_safe = archive_bytes(&root, ExportMode::ShareSafe, false).unwrap();
+        let entries = read_archive_bytes(&share_safe).unwrap();
+        assert!(entries.iter().all(|(path, _)| path != secret_path));
+    }
+
+    #[test]
     fn verify_rejects_unknown_decision_engine_schema() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("BrainMap");
@@ -765,6 +934,65 @@ mod tests {
     }
 
     #[test]
+    fn verify_rejects_secret_like_manifest_and_archive_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+        let out = tmp.path().join("malicious-path.brainmap.tar.zst");
+        export_archive(&root, &out, ExportMode::Portable).unwrap();
+        let mut entries = read_archive(&out, None).unwrap();
+        let original_path = entries
+            .iter()
+            .find(|(path, _)| path != "manifest.json")
+            .map(|(path, _)| path.clone())
+            .unwrap();
+        let secret_path = "notes/api_key=abcdef1234567890.md";
+        let manifest = entries
+            .iter_mut()
+            .find(|(path, _)| path == "manifest.json")
+            .unwrap();
+        let mut value: serde_json::Value = serde_json::from_slice(&manifest.1).unwrap();
+        let manifest_file = value["files"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|file| file["path"] == original_path)
+            .unwrap();
+        manifest_file["path"] = serde_json::json!(secret_path);
+        manifest.1 = serde_json::to_vec_pretty(&value).unwrap();
+        entries
+            .iter_mut()
+            .find(|(path, _)| path == &original_path)
+            .unwrap()
+            .0 = secret_path.into();
+        fs::write(&out, encode_entries(&entries)).unwrap();
+
+        let error = verify_archive(&out, None).unwrap_err();
+        assert!(error.to_string().contains("secret-like archive path"));
+    }
+
+    #[test]
+    fn verify_rejects_secret_like_manifest_metadata() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+        let out = tmp.path().join("malicious-manifest.brainmap.tar.zst");
+        export_archive(&root, &out, ExportMode::Portable).unwrap();
+        let mut entries = read_archive(&out, None).unwrap();
+        let manifest = entries
+            .iter_mut()
+            .find(|(path, _)| path == "manifest.json")
+            .unwrap();
+        let mut value: serde_json::Value = serde_json::from_slice(&manifest.1).unwrap();
+        value["brainmapVersion"] = serde_json::json!("api_key=abcdef1234567890");
+        manifest.1 = serde_json::to_vec_pretty(&value).unwrap();
+        fs::write(&out, encode_entries(&entries)).unwrap();
+
+        let error = verify_archive(&out, None).unwrap_err();
+        assert!(error.to_string().contains("secret-like archive manifest"));
+    }
+
+    #[test]
     fn portable_exports_exclude_snapshot_archives() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("BrainMap");
@@ -800,7 +1028,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(manifest.schema_version, "decision-engine-v3");
+        assert_eq!(manifest.schema_version, index::COMPILED_SCHEMA_VERSION);
     }
 
     #[test]

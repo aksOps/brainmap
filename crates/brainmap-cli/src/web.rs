@@ -559,7 +559,7 @@ mod tests {
         vault::init_vault(Some(root.clone()), false, true).unwrap();
         fs::write(
             root.join("40-restrictions/secret-web-note.md"),
-            "---\nid: secret-web-note\ntype: restriction\nstatus: active\nconfidence: high\nrisk_tier: hard_no\nsensitivity: secret\n---\n# Secret web needle\nsecret-web-needle\n",
+            "---\nid: secret-web-note\ntype: restriction\nstatus: tested\nconfidence: high\nrisk_tier: never-auto\nsensitivity: secret\n---\n# Secret web needle\nsecret-web-needle\n",
         )
         .unwrap();
         index::rebuild(&root).unwrap();

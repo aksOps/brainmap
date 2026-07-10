@@ -122,6 +122,7 @@ fn production_smoke_cli_flow() {
     assert!(eval.contains("\"falseAsk\": 0"));
     assert!(eval.contains("\"falseBlock\": 0"));
     assert!(eval.contains("\"wrongChoice\": 0"));
+    assert!(eval.contains("\"wrongMetadata\": 0"));
     let report: serde_json::Value = serde_json::from_str(&eval).expect("parse eval report");
     let recall = &report["learnedRuleRecall"];
     let exact_expected = recall["exactExpected"].as_u64().expect("exact denominator");
@@ -159,15 +160,38 @@ fn production_smoke_cli_flow() {
 fn bench_scale_cli_reports_envelope_fields() {
     let tmp = tempfile::tempdir().expect("temp dir");
     let root = tmp.path().join("BrainMap");
-    let output = ok(&["bench", "--vault", path(&root), "--scale", "12"]);
-    assert!(output.contains("\"scaleRequested\": 12"));
-    assert!(output.contains("\"notes\": 12"));
+    let output = ok(&["bench", "--vault", path(&root), "--scale", "140"]);
+    assert!(output.contains("\"scaleRequested\": 140"));
+    assert!(output.contains("\"notes\": 140"));
     assert!(output.contains("\"indexRebuildMs\""));
     assert!(output.contains("\"gateP50Ms\""));
     assert!(output.contains("\"gateP95Ms\""));
     assert!(output.contains("\"candidateBounds\""));
     assert!(output.contains("\"host\""));
     assert!(output.contains("\"contextFastMs\""));
+    let report: serde_json::Value = serde_json::from_str(&output).expect("benchmark JSON");
+    assert_eq!(report["candidateBounds"]["maximumFuzzyRowsScored"], 40);
+    assert_eq!(report["candidateBounds"]["rowsPerTerm"], 5_000);
+    assert_eq!(report["candidateBounds"]["executableRules"], 5_000);
+    assert_eq!(
+        report["candidateBounds"]["retrieval"],
+        "actual-rule-term-postings"
+    );
+    assert_eq!(report["unavailableChoiceProbe"]["outcome"], "ask_user");
+    assert_eq!(report["unavailableChoiceProbe"]["matchKind"], "fuzzy");
+    assert_eq!(
+        report["unavailableChoiceProbe"]["candidateCollision"],
+        false
+    );
+    assert!(
+        report["unavailableChoiceProbe"]["matchedPolicies"]
+            .as_array()
+            .is_some_and(|policies| policies.iter().any(|policy| {
+                policy
+                    .as_str()
+                    .is_some_and(|path| path.contains("bench-decision-00000"))
+            }))
+    );
 }
 
 #[test]
@@ -232,6 +256,45 @@ fn legacy_decision_commands_record_project_narrow_defaults() {
             .is_some_and(|scope| scope.starts_with("project:"))
     }));
     assert!(records.iter().all(|record| record["scope"] != "global"));
+}
+
+#[test]
+fn gate_blocks_secret_in_risk_without_persisting_it() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path().join("BrainMap");
+    let secret = "api_key=abcdef1234567890";
+    ok(&["init-vault", "--vault", path(&root), "--yes"]);
+    ok(&["index", "rebuild", "--vault", path(&root)]);
+
+    let output = ok(&[
+        "gate",
+        "--json",
+        "--intent",
+        "plan",
+        "--situation",
+        "Choose a local formatter",
+        "--options",
+        "biome|prettier",
+        "--risk",
+        secret,
+        "--reversible",
+        "true",
+        "--decision-type",
+        "tooling",
+        "--scope",
+        "project:secret-regression",
+        "--vault",
+        path(&root),
+    ]);
+    let result: serde_json::Value = serde_json::from_str(&output).expect("parse gate result");
+    assert_eq!(result["outcome"], "block");
+
+    let ledger = std::fs::read_to_string(root.join("90-calibration/decision-ledger.jsonl"))
+        .expect("read decision ledger");
+    assert!(!ledger.contains(secret));
+    let event: serde_json::Value =
+        serde_json::from_str(ledger.lines().last().expect("ledger event")).expect("parse event");
+    assert_eq!(event["risk"], "[REDACTED]");
 }
 
 #[test]
@@ -423,7 +486,7 @@ fn onboarding_answer_file_changes_a_scoped_decision() {
         path(&root),
         "--dry-run",
     ]);
-    assert!(preview.contains("would learn"));
+    assert!(preview.contains("onboarding exact executable update preview"));
     assert_eq!(tree_snapshot(&root), before_preview);
     let before_apply = ok(&[
         "gate",
@@ -501,7 +564,7 @@ fn interactive_onboarding_completes_on_a_clean_vault() {
         .take()
         .expect("onboarding stdin")
         .write_all(
-            b"Choose formatter for interactive project\nbiome|prettier\nbiome\nprettier\ntooling\n\nFast local formatter\n\ny\n",
+            b"follow project configuration\nask user\nmake the smallest reversible change\n\ny\n",
         )
         .expect("answer onboarding prompts");
     let output = child.wait_with_output().expect("wait for onboarding");
@@ -510,15 +573,44 @@ fn interactive_onboarding_completes_on_a_clean_vault() {
         "interactive onboarding failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(String::from_utf8_lossy(&output.stdout).contains("onboarding applied 1 decision"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Calibration 1/3"));
+    assert!(stdout.contains("Calibration 2/3"));
+    assert!(stdout.contains("Calibration 3/3"));
+    assert!(stdout.contains("onboarding applied 3 decision"));
+    let preview: serde_json::Value = stdout
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("onboarding exact executable update preview: ")
+                .map(|json| serde_json::from_str(json).expect("parse exact onboarding preview"))
+        })
+        .expect("exact executable onboarding preview");
+    assert_eq!(
+        preview["packet"]["decisionRule"]["options"],
+        serde_json::json!(["follow project configuration", "ask user"])
+    );
+    assert_eq!(
+        preview["packet"]["decisionRule"]["rejected"],
+        serde_json::json!(["ask user"])
+    );
+    let packet_id = preview["packet"]["id"].as_str().expect("preview packet id");
+    let applied_packet: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(
+            root.join("99-meta/pending-update-packets")
+                .join(format!("manual-decision-{packet_id}.applied.json")),
+        )
+        .expect("read exact applied onboarding packet"),
+    )
+    .expect("parse exact applied onboarding packet");
+    assert_eq!(preview["packet"], applied_packet);
 
     let result = ok(&[
         "gate",
         "--json",
         "--situation",
-        "Choose formatter for interactive project",
+        "When a project declares a formatter, choose the formatter policy",
         "--options",
-        "prettier|biome",
+        "ask user|follow project configuration",
         "--risk",
         "low",
         "--reversible",
@@ -529,9 +621,52 @@ fn interactive_onboarding_completes_on_a_clean_vault() {
         path(&root),
         "--dry-run",
     ]);
-    assert!(result.contains("\"selectedOption\": \"biome\""));
+    assert!(result.contains("\"selectedOption\": \"follow project configuration\""));
     assert!(result.contains("\"ruleScope\": \"project:"));
     assert!(!result.contains("\"ruleScope\": \"global\""));
+}
+
+#[test]
+fn onboarding_rejects_secrets_in_pending_metadata() {
+    for (field, secret) in [
+        ("decisionType", "api_key=abcdef1234567890"),
+        ("scope", "project:api_key=abcdef1234567890"),
+    ] {
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let root = tmp.path().join("BrainMap");
+        let answers = tmp.path().join("answers.json");
+        let mut decision = serde_json::json!({
+            "situation": "Choose an ambiguous local workflow",
+            "decisionType": "workflow",
+            "scope": "project:metadata-secret",
+            "freeText": "It depends on the current change"
+        });
+        decision[field] = serde_json::json!(secret);
+        std::fs::write(
+            &answers,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "schemaVersion": "brainmap-onboarding-v1",
+                "decisions": [decision]
+            }))
+            .expect("serialize answers"),
+        )
+        .expect("write answers");
+        ok(&["init-vault", "--vault", path(&root), "--yes"]);
+
+        fails(
+            &[
+                "onboard",
+                "--answers",
+                path(&answers),
+                "--vault",
+                path(&root),
+                "--yes",
+            ],
+            "secret-like material",
+        );
+        let pending = root.join("90-calibration/pending-onboarding.jsonl");
+        assert!(!pending.exists());
+    }
 }
 
 #[test]
@@ -1036,7 +1171,7 @@ fn export_restore_preserves_learned_corrected_and_policy_decisions() {
         r#"---
 id: restore-policy
 type: decision-policy
-status: active
+status: tested
 confidence: high
 risk_tier: reversible-auto
 sensitivity: personal
