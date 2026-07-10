@@ -1,9 +1,10 @@
 use crate::cli::EvalArgs;
-use crate::{gate, index, vault};
+use crate::{gate, index, markdown, util, vault};
 use anyhow::Result;
 use serde::Deserialize;
 use serde_json::json;
 use std::fs;
+use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
 struct Case {
@@ -19,6 +20,25 @@ struct Case {
     #[serde(rename = "mustAskUser")]
     must_ask_user: Option<bool>,
     reason: Option<String>,
+    setup: Option<CaseSetup>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CaseSetup {
+    gate_mode: Option<String>,
+    autopilot_mode: Option<String>,
+    threshold: Option<f64>,
+    #[serde(default)]
+    learned_decisions: Vec<EvalDecisionRule>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EvalDecisionRule {
+    chosen: String,
+    #[serde(default)]
+    rejected: Vec<String>,
+    classification: String,
 }
 
 pub fn run(args: EvalArgs) -> Result<()> {
@@ -47,6 +67,15 @@ pub fn run(args: EvalArgs) -> Result<()> {
     let mut ids = Vec::new();
     let mut reasons = Vec::new();
     for case in &cases {
+        let case_vault = case
+            .setup
+            .as_ref()
+            .map(|setup| prepare_case_vault(case, setup))
+            .transpose()?;
+        let case_root = case_vault
+            .as_ref()
+            .map(|(_, root)| root.as_path())
+            .unwrap_or(root.as_path());
         ids.push(case.id.clone());
         if case.must_ask_user.unwrap_or(false) {
             expected_asks += 1;
@@ -55,7 +84,7 @@ pub fn run(args: EvalArgs) -> Result<()> {
             reasons.push(reason.clone());
         }
         let res = gate::evaluate(
-            &root,
+            case_root,
             gate::GateInput {
                 intent: "would-ask-user".into(),
                 situation: case.situation.clone(),
@@ -99,4 +128,47 @@ pub fn run(args: EvalArgs) -> Result<()> {
         }))?
     );
     Ok(())
+}
+
+fn prepare_case_vault(case: &Case, setup: &CaseSetup) -> Result<(tempfile::TempDir, PathBuf)> {
+    util::validate_safe_component("eval case id", &case.id)?;
+    let temp = tempfile::tempdir()?;
+    let root = temp.path().join("BrainMap");
+    fs::create_dir_all(root.join(".brainmap"))?;
+    fs::create_dir_all(root.join("60-decision-examples"))?;
+    for (index, rule) in setup.learned_decisions.iter().enumerate() {
+        let id = format!("eval-{}-{index}", case.id);
+        let marker = markdown::decision_rule_marker(&markdown::DecisionRule {
+            situation: case.situation.clone(),
+            options: case.options.clone(),
+            chosen: rule.chosen.clone(),
+            rejected: rule.rejected.clone(),
+        })?;
+        let body = format!(
+            "{}# Eval rule {}\n\n## Deterministic Rule\n\n{}\n",
+            markdown::frontmatter(&id, &rule.classification, "ask-before-action", "personal"),
+            case.id,
+            marker
+        );
+        util::write_atomic(
+            &root.join("60-decision-examples").join(format!("{id}.md")),
+            body.as_bytes(),
+        )?;
+    }
+    if setup.autopilot_mode.is_some() || setup.threshold.is_some() {
+        util::write_atomic(
+            &root.join(".brainmap/autopilot.json"),
+            serde_json::to_vec_pretty(&json!({
+                "mode": setup.autopilot_mode.as_deref().unwrap_or("shadow"),
+                "level": if setup.autopilot_mode.as_deref() == Some("disabled") { "off" } else { "conservative" },
+                "threshold": setup.threshold.unwrap_or(0.82)
+            }))?
+            .as_slice(),
+        )?;
+    }
+    if let Some(mode) = &setup.gate_mode {
+        util::write_atomic(&root.join(".brainmap/gate-mode"), mode.as_bytes())?;
+    }
+    index::rebuild(&root)?;
+    Ok((temp, root))
 }

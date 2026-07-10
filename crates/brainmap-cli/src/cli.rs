@@ -614,7 +614,7 @@ pub fn run() -> Result<()> {
                 learning::autopilot_set(vault, &to, "conservative", None)
             }
             AutopilotCommand::SetThreshold { confidence, vault } => {
-                learning::autopilot_set(vault, "shadow", "conservative", Some(confidence))
+                learning::autopilot_set_threshold(vault, confidence)
             }
         },
         Command::GateMode(args) => learning::gate_mode(args.vault, &args.mode),

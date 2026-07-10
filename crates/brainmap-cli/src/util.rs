@@ -135,6 +135,70 @@ pub fn safe_archive_path(path: &Path) -> Result<()> {
     Ok(())
 }
 
+pub fn normalize_archive_path(path: &Path) -> Result<String> {
+    let portable = path.to_string_lossy().replace('\\', "/");
+    let portable_path = Path::new(&portable);
+    safe_archive_path(portable_path)?;
+    let mut normalized = PathBuf::new();
+    for component in portable_path.components() {
+        match component {
+            Component::Normal(part) => normalized.push(part),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                bail!("unsafe archive path: {}", path.display())
+            }
+        }
+    }
+    if normalized.as_os_str().is_empty() {
+        bail!("empty archive path");
+    }
+    Ok(normalized.to_string_lossy().to_string())
+}
+
+pub fn portable_archive_collision_key(normalized_path: &str) -> Result<String> {
+    let mut key = Vec::new();
+    for component in normalized_path.split('/') {
+        if component.is_empty()
+            || component.ends_with(['.', ' '])
+            || component
+                .chars()
+                .any(|ch| ch.is_control() || matches!(ch, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
+        {
+            bail!("archive path is not portable: {normalized_path}");
+        }
+        // Windows uses an uppercase table for case-insensitive filename comparison.
+        // Rust's Unicode uppercase expansion also folds pairs such as Greek σ/ς.
+        let folded = component.to_uppercase();
+        let stem = folded.split('.').next().unwrap_or_default();
+        let reserved = matches!(stem, "CON" | "PRN" | "AUX" | "NUL")
+            || stem
+                .strip_prefix("COM")
+                .or_else(|| stem.strip_prefix("LPT"))
+                .is_some_and(|suffix| {
+                    suffix.len() == 1 && matches!(suffix.as_bytes()[0], b'1'..=b'9')
+                });
+        if reserved {
+            bail!("archive path uses a reserved Windows name: {normalized_path}");
+        }
+        key.push(folded);
+    }
+    Ok(key.join("/"))
+}
+
+pub fn validate_safe_component(label: &str, value: &str) -> Result<()> {
+    let valid = !value.is_empty()
+        && value.len() <= 160
+        && value != "."
+        && value != ".."
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'));
+    if !valid {
+        bail!("invalid {label}: use 1-160 ASCII letters, numbers, hyphens, or underscores");
+    }
+    Ok(())
+}
+
 pub fn collect_files(root: &Path) -> Result<Vec<PathBuf>> {
     fn walk(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
         for entry in fs::read_dir(dir).with_context(|| format!("read {}", dir.display()))? {
@@ -168,4 +232,32 @@ pub fn strip_optional_program_alias(mut args: Vec<OsString>) -> Vec<OsString> {
         args.remove(1);
     }
     args
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn archive_path_normalization_rejects_windows_style_traversal() {
+        assert!(normalize_archive_path(Path::new("..\\escape")).is_err());
+        assert_eq!(
+            normalize_archive_path(Path::new("notes/./policy.md")).unwrap(),
+            "notes/policy.md"
+        );
+    }
+
+    #[test]
+    fn portable_archive_keys_fold_case_and_reject_windows_names() {
+        assert_eq!(
+            portable_archive_collision_key("Notes/Policy.md").unwrap(),
+            portable_archive_collision_key("notes/policy.MD").unwrap()
+        );
+        assert_eq!(
+            portable_archive_collision_key("notes/σ.md").unwrap(),
+            portable_archive_collision_key("notes/ς.md").unwrap()
+        );
+        assert!(portable_archive_collision_key("notes/CON.md").is_err());
+        assert!(portable_archive_collision_key("notes/policy. ").is_err());
+    }
 }

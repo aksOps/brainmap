@@ -126,7 +126,7 @@ fn call_tool(root: &Path, name: &str, args: Value) -> Result<Value> {
         "brainmap_learn_feedback" => {
             learning::learn_feedback(crate::cli::LearnFeedbackArgs {
                 decision_id: string_arg(&args, "decisionId")
-                    .unwrap_or_else(|| "mcp-feedback".into()),
+                    .context("learn feedback requires decisionId")?,
                 correction: string_arg(&args, "correction")
                     .context("learn feedback requires correction")?,
                 vault: Some(root.to_path_buf()),
@@ -158,12 +158,7 @@ fn call_tool(root: &Path, name: &str, args: Value) -> Result<Value> {
         "brainmap_restore" => {
             json!({"supported": true, "useCli": "brainmap restore --file ... --to ..."})
         }
-        "brainmap_autopilot_status" => json!({
-            "mode": "shadow",
-            "level": "conservative",
-            "threshold": 0.82,
-            "killSwitch": std::env::var("BRAINMAP_DISABLE_AUTOPILOT").ok().as_deref() == Some("1")
-        }),
+        "brainmap_autopilot_status" => learning::autopilot_status_value(root),
         _ => unreachable!(),
     };
     Ok(json!({"content":[{"type":"text","text":serde_json::to_string_pretty(&value)?}]}))

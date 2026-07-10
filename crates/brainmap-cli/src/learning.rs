@@ -2,8 +2,8 @@ use crate::cli::{
     ApplyArgs, BuildArgs, CalibrateArgs, CaptureArgs, ExtractArgs, LearnDecisionArgs,
     LearnFeedbackArgs, PruneImportsArgs, RecordDecisionArgs,
 };
-use crate::{index, privacy, util, vault};
-use anyhow::{Result, bail};
+use crate::{index, markdown, privacy, util, vault};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::fs;
@@ -83,6 +83,7 @@ struct InterviewQuestion {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UpdatePacket {
     pub id: String,
     #[serde(rename = "createdAt")]
@@ -100,6 +101,12 @@ pub struct UpdatePacket {
     pub action: String,
     #[serde(rename = "humanQuestion")]
     pub human_question: Option<String>,
+    #[serde(
+        default,
+        rename = "decisionRule",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub decision_rule: Option<markdown::DecisionRule>,
     pub status: String,
 }
 
@@ -392,16 +399,20 @@ fn signal_strength(lower: &str) -> &'static str {
 
 pub fn record_decision(args: RecordDecisionArgs) -> Result<()> {
     let root = vault::resolve_vault(args.vault);
-    let id = args
-        .decision_id
-        .unwrap_or_else(|| util::id("dec", "manual"));
+    let id = if let Some(id) = args.decision_id {
+        validate_decision_id(&id)?;
+        id
+    } else {
+        util::id("dec", "manual")
+    };
+    let chosen = args.chosen.map(|value| privacy::redact(&value));
     util::append_jsonl(
         &root.join("90-calibration/decision-ledger.jsonl"),
         &json!({
             "id": id,
             "createdAt": util::now_iso(),
             "kind": "record-decision",
-            "chosen": args.chosen,
+            "chosen": chosen,
             "wasAsked": args.was_asked.unwrap_or(false),
             "evidenceStrength": if args.was_asked.unwrap_or(false) { "medium" } else { "weak" }
         }),
@@ -412,8 +423,9 @@ pub fn record_decision(args: RecordDecisionArgs) -> Result<()> {
 
 pub fn learn_feedback(args: LearnFeedbackArgs) -> Result<()> {
     let root = vault::resolve_vault(args.vault);
+    validate_decision_id(&args.decision_id)?;
     let redacted = privacy::redact(&args.correction);
-    let packet = packet(
+    let mut packet = packet(
         "harness",
         "corrected-decision",
         &redacted,
@@ -426,6 +438,19 @@ pub fn learn_feedback(args: LearnFeedbackArgs) -> Result<()> {
         println!("secret feedback rejected/redacted; no packet created");
         return Ok(());
     }
+    let situation = decision_situation(&root, &args.decision_id)?.with_context(|| {
+        format!(
+            "decision id {} was not found in the gate ledger",
+            args.decision_id
+        )
+    })?;
+    let (chosen, rejected) = normalize_feedback_rule(&redacted);
+    packet.decision_rule = Some(markdown::DecisionRule {
+        situation,
+        options: Vec::new(),
+        chosen,
+        rejected,
+    });
     write_packet(&root, &args.decision_id, &packet)?;
     println!("created high-strength update packet {}", packet.id);
     Ok(())
@@ -433,15 +458,20 @@ pub fn learn_feedback(args: LearnFeedbackArgs) -> Result<()> {
 
 pub fn learn_decision(args: LearnDecisionArgs) -> Result<()> {
     let root = vault::resolve_vault(args.vault);
+    let rejected = args
+        .rejected
+        .clone()
+        .unwrap_or_else(|| "none recorded".into());
+    let rationale = args
+        .rationale
+        .clone()
+        .unwrap_or_else(|| "not supplied".into());
     let claim = format!(
         "When {}, choose {}; rejected {}; rationale {}",
-        args.situation,
-        args.chosen,
-        args.rejected.unwrap_or_else(|| "none recorded".into()),
-        args.rationale.unwrap_or_else(|| "not supplied".into())
+        args.situation, args.chosen, rejected, rationale
     );
     let redacted = privacy::redact(&claim);
-    let packet = packet(
+    let mut packet = packet(
         "manual",
         "decision-example",
         &redacted,
@@ -454,6 +484,22 @@ pub fn learn_decision(args: LearnDecisionArgs) -> Result<()> {
         println!("secret decision rejected/redacted; no packet created");
         return Ok(());
     }
+    packet.decision_rule = Some(markdown::DecisionRule {
+        situation: privacy::redact(&args.situation),
+        options: args
+            .options
+            .split('|')
+            .map(str::trim)
+            .filter(|option| !option.is_empty())
+            .map(privacy::redact)
+            .collect(),
+        chosen: privacy::redact(&args.chosen),
+        rejected: args
+            .rejected
+            .iter()
+            .map(|value| privacy::redact(value))
+            .collect(),
+    });
     write_packet(&root, "manual-decision", &packet)?;
     println!("created decision update packet {}", packet.id);
     Ok(())
@@ -472,12 +518,13 @@ pub fn capture(args: CaptureArgs) -> Result<()> {
 
 pub(crate) fn capture_text(root: &Path, text: &str, source: &str) -> Result<()> {
     let redacted = privacy::redact(text);
+    let redacted_source = privacy::redact(source);
     util::append_jsonl(
         &root.join(".brainmap/capture-queue.jsonl"),
         &json!({
             "id": util::id("cap", &redacted),
             "createdAt": util::now_iso(),
-            "source": source,
+            "source": redacted_source,
             "text": compact(&redacted),
             "sensitivity": privacy::sensitivity(text)
         }),
@@ -505,11 +552,26 @@ pub fn apply(args: ApplyArgs) -> Result<()> {
     let mut applied = 0usize;
     for entry in fs::read_dir(&dir)? {
         let path = entry?.path();
+        if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(".applied.json"))
+        {
+            continue;
+        }
         if path.extension().and_then(|s| s.to_str()) != Some("json") {
             continue;
         }
         let text = fs::read_to_string(&path)?;
-        let packet: UpdatePacket = serde_json::from_str(&text)?;
+        let raw_packet: serde_json::Value = serde_json::from_str(&text)?;
+        if json_value_contains_secret(&raw_packet) {
+            bail!("packet {} contains secret-like material", path.display());
+        }
+        let packet: UpdatePacket = serde_json::from_value(raw_packet)?;
+        util::validate_safe_component("packet id", &packet.id)?;
+        if packet_contains_secret(&packet) {
+            bail!("packet {} contains secret-like material", packet.id);
+        }
         if packet.sensitivity == "secret" {
             continue;
         }
@@ -521,7 +583,7 @@ pub fn apply(args: ApplyArgs) -> Result<()> {
             .join("60-decision-examples")
             .join(format!("{}.md", packet.id));
         let body = format!(
-            "{}# {}\n\n## Claim\n\n{}\n\n## Evidence\n\n- {}\n\n## Links\n\n{}\n",
+            "{}# {}\n\n## Claim\n\n{}\n\n{}## Evidence\n\n- {}\n\n## Links\n\n{}\n",
             crate::markdown::frontmatter(
                 &packet.id,
                 &packet.classification,
@@ -530,6 +592,13 @@ pub fn apply(args: ApplyArgs) -> Result<()> {
             ),
             packet.claim,
             packet.claim,
+            packet
+                .decision_rule
+                .as_ref()
+                .map(markdown::decision_rule_marker)
+                .transpose()?
+                .map(|marker| format!("## Deterministic Rule\n\n{marker}\n\n"))
+                .unwrap_or_default(),
             packet
                 .evidence
                 .first()
@@ -692,17 +761,88 @@ pub fn calibrate(args: CalibrateArgs) -> Result<()> {
 
 pub fn autopilot_status(vault: Option<PathBuf>) -> Result<()> {
     let root = vault::resolve_vault(vault);
-    let cfg = read_config(&root);
     println!(
         "{}",
-        serde_json::to_string_pretty(&json!({
-            "mode": cfg.0,
-            "threshold": cfg.2,
-            "level": cfg.1,
-            "killSwitch": std::env::var("BRAINMAP_DISABLE_AUTOPILOT").ok().as_deref() == Some("1")
-        }))?
+        serde_json::to_string_pretty(&autopilot_status_value(&root))?
     );
     Ok(())
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct AutopilotConfig {
+    pub mode: String,
+    pub level: String,
+    pub threshold: f64,
+}
+
+pub(crate) fn autopilot_config(root: &Path) -> AutopilotConfig {
+    let default = || AutopilotConfig {
+        mode: "shadow".into(),
+        level: "conservative".into(),
+        threshold: 0.82,
+    };
+    let fail_closed = || AutopilotConfig {
+        mode: "disabled".into(),
+        level: "off".into(),
+        threshold: 1.0,
+    };
+    let path = root.join(".brainmap/autopilot.json");
+    if !path.exists() {
+        return default();
+    }
+    let Ok(text) = fs::read_to_string(path) else {
+        return fail_closed();
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return fail_closed();
+    };
+    let threshold = value
+        .get("threshold")
+        .and_then(|value| value.as_f64())
+        .filter(|value| value.is_finite() && (0.0..=1.0).contains(value))
+        .unwrap_or(0.82);
+    let Some(mode) = value.get("mode").and_then(|value| value.as_str()) else {
+        return fail_closed();
+    };
+    if !matches!(mode, "shadow" | "disabled" | "conservative" | "balanced") {
+        return fail_closed();
+    }
+    AutopilotConfig {
+        mode: mode.into(),
+        level: value
+            .get("level")
+            .and_then(|value| value.as_str())
+            .unwrap_or("conservative")
+            .into(),
+        threshold,
+    }
+}
+
+pub(crate) fn gate_mode_config(root: &Path) -> String {
+    let path = root.join(".brainmap/gate-mode");
+    if !path.exists() {
+        return "shadow".into();
+    }
+    let Ok(mode) = fs::read_to_string(path) else {
+        return "ask-always".into();
+    };
+    let mode = mode.trim();
+    if matches!(mode, "ask-always" | "suggest-only" | "shadow" | "active") {
+        mode.into()
+    } else {
+        "ask-always".into()
+    }
+}
+
+pub(crate) fn autopilot_status_value(root: &Path) -> serde_json::Value {
+    let config = autopilot_config(root);
+    json!({
+        "mode": config.mode,
+        "threshold": config.threshold,
+        "level": config.level,
+        "gateMode": gate_mode_config(root),
+        "killSwitch": std::env::var("BRAINMAP_DISABLE_AUTOPILOT").ok().as_deref() == Some("1")
+    })
 }
 
 pub fn autopilot_set(
@@ -711,9 +851,18 @@ pub fn autopilot_set(
     level: &str,
     threshold: Option<f64>,
 ) -> Result<()> {
+    if !matches!(mode, "shadow" | "disabled" | "conservative" | "balanced") {
+        bail!("unsupported autopilot mode: {mode}");
+    }
+    if !matches!(level, "off" | "conservative" | "balanced" | "aggressive") {
+        bail!("unsupported autopilot level: {level}");
+    }
     let root = vault::resolve_vault(vault);
     fs::create_dir_all(root.join(".brainmap"))?;
-    let threshold = threshold.unwrap_or(0.82);
+    let threshold = threshold.unwrap_or_else(|| autopilot_config(&root).threshold);
+    if !threshold.is_finite() || !(0.0..=1.0).contains(&threshold) {
+        bail!("autopilot threshold must be between 0.0 and 1.0");
+    }
     util::write_atomic(
         &root.join(".brainmap/autopilot.json"),
         serde_json::to_vec_pretty(
@@ -723,6 +872,12 @@ pub fn autopilot_set(
     )?;
     println!("autopilot: mode={mode} level={level} threshold={threshold}");
     Ok(())
+}
+
+pub fn autopilot_set_threshold(vault: Option<PathBuf>, threshold: f64) -> Result<()> {
+    let root = vault::resolve_vault(vault);
+    let config = autopilot_config(&root);
+    autopilot_set(Some(root), &config.mode, &config.level, Some(threshold))
 }
 
 pub fn autopilot_promote(vault: Option<PathBuf>, to: &str) -> Result<()> {
@@ -786,6 +941,9 @@ fn autopilot_stats(root: &Path) -> Result<AutopilotStats> {
 }
 
 pub fn gate_mode(vault: Option<PathBuf>, mode: &str) -> Result<()> {
+    if !matches!(mode, "ask-always" | "suggest-only" | "shadow" | "active") {
+        bail!("unsupported gate mode: {mode}");
+    }
     let root = vault::resolve_vault(vault);
     fs::create_dir_all(root.join(".brainmap"))?;
     util::write_atomic(&root.join(".brainmap/gate-mode"), mode.as_bytes())?;
@@ -840,16 +998,155 @@ fn packet(
         sensitivity: sensitivity.into(),
         action: action.into(),
         human_question,
+        decision_rule: None,
         status: "pending".into(),
     }
 }
 
+fn decision_situation(root: &Path, decision_id: &str) -> Result<Option<String>> {
+    let ledger = root.join("90-calibration/decision-ledger.jsonl");
+    let Ok(text) = fs::read_to_string(ledger) else {
+        return Ok(None);
+    };
+    for line in text.lines().rev().filter(|line| !line.trim().is_empty()) {
+        let value: serde_json::Value = serde_json::from_str(line)?;
+        if value.get("id").and_then(|value| value.as_str()) == Some(decision_id)
+            && let Some(situation) = value.get("situation").and_then(|value| value.as_str())
+        {
+            return Ok(Some(situation.to_string()));
+        }
+    }
+    Ok(None)
+}
+
+fn validate_decision_id(decision_id: &str) -> Result<()> {
+    util::validate_safe_component("decision id", decision_id)?;
+    if privacy::contains_secret(decision_id) {
+        bail!("decision id contains secret-like material");
+    }
+    Ok(())
+}
+
+fn normalize_feedback_rule(correction: &str) -> (String, Vec<String>) {
+    let lower = correction.to_ascii_lowercase();
+    let rejected = rejected_feedback_choices(correction);
+    let negative_ask = ["do not ask", "don't ask", "never ask"]
+        .iter()
+        .any(|marker| lower.contains(marker));
+    if !negative_ask
+        && ["ask user", "ask me", "always ask", "require approval"]
+            .iter()
+            .any(|marker| lower.contains(marker))
+    {
+        return ("ask user".into(), rejected);
+    }
+    if negative_ask
+        && let Some(last_clause) = correction.rsplit(';').next()
+        && !last_clause.to_lowercase().contains("ask")
+    {
+        return (clean_feedback_clause(last_clause), rejected);
+    }
+    if let Some((_, choice)) = correction.rsplit_once(" instead ") {
+        return (clean_feedback_clause(choice), rejected);
+    }
+    for marker in ["choose ", "use ", "prefer "] {
+        if let Some(start) = lower.find(marker) {
+            return (
+                clean_feedback_clause(&correction[start + marker.len()..]),
+                rejected,
+            );
+        }
+    }
+    (compact(correction), rejected)
+}
+
+fn rejected_feedback_choices(correction: &str) -> Vec<String> {
+    let lower = correction.to_ascii_lowercase();
+    let mut rejected = Vec::new();
+    for marker in ["never ", "do not ", "don't "] {
+        let mut offset = 0usize;
+        while let Some(relative) = lower[offset..].find(marker) {
+            let start = offset + relative + marker.len();
+            let tail = &correction[start..];
+            let end = tail.find([';', ',', '.']).unwrap_or(tail.len());
+            let choice = clean_feedback_clause(&tail[..end]);
+            if !choice.is_empty() && !rejected.contains(&choice) {
+                rejected.push(choice);
+            }
+            offset = start + end;
+            if offset >= lower.len() {
+                break;
+            }
+        }
+    }
+    rejected
+}
+
+fn clean_feedback_clause(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches(|ch: char| matches!(ch, ';' | ',' | '.'))
+        .trim()
+        .to_string()
+}
+
 fn write_packet(root: &Path, stem: &str, packet: &UpdatePacket) -> Result<()> {
+    util::validate_safe_component("packet filename stem", stem)?;
+    util::validate_safe_component("packet id", &packet.id)?;
+    if packet_contains_secret(packet) {
+        bail!("packet {} contains secret-like material", packet.id);
+    }
+    let bytes = serde_json::to_vec_pretty(packet)?;
     fs::create_dir_all(root.join("99-meta/pending-update-packets"))?;
     let path = root
         .join("99-meta/pending-update-packets")
         .join(format!("{stem}-{}.json", packet.id));
-    util::write_atomic(&path, serde_json::to_vec_pretty(packet)?.as_slice())
+    util::write_atomic(&path, &bytes)
+}
+
+fn packet_contains_secret(packet: &UpdatePacket) -> bool {
+    let strings = [
+        packet.id.as_str(),
+        packet.created_at.as_str(),
+        packet.classification.as_str(),
+        packet.claim.as_str(),
+        packet.sensitivity.as_str(),
+        packet.action.as_str(),
+        packet.status.as_str(),
+    ];
+    strings.into_iter().any(privacy::contains_secret)
+        || json_value_contains_secret(&packet.source)
+        || packet.evidence.iter().any(json_value_contains_secret)
+        || packet
+            .target_notes
+            .iter()
+            .chain(packet.suggested_links.iter())
+            .any(|value| privacy::contains_secret(value))
+        || packet
+            .human_question
+            .as_deref()
+            .is_some_and(privacy::contains_secret)
+        || packet.decision_rule.as_ref().is_some_and(|rule| {
+            privacy::contains_secret(&rule.situation)
+                || privacy::contains_secret(&rule.chosen)
+                || rule
+                    .options
+                    .iter()
+                    .chain(rule.rejected.iter())
+                    .any(|value| privacy::contains_secret(value))
+        })
+}
+
+fn json_value_contains_secret(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::String(value) => privacy::contains_secret(value),
+        serde_json::Value::Array(values) => values.iter().any(json_value_contains_secret),
+        serde_json::Value::Object(values) => {
+            values.keys().any(|key| privacy::contains_secret(key))
+                || values.values().any(json_value_contains_secret)
+        }
+        _ => false,
+    }
 }
 
 fn compact(text: &str) -> String {
@@ -857,29 +1154,6 @@ fn compact(text: &str) -> String {
         .take(200)
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-fn read_config(root: &Path) -> (String, String, f64) {
-    let path = root.join(".brainmap/autopilot.json");
-    let Ok(text) = fs::read_to_string(path) else {
-        return ("shadow".into(), "conservative".into(), 0.82);
-    };
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return ("shadow".into(), "conservative".into(), 0.82);
-    };
-    (
-        json.get("mode")
-            .and_then(|v| v.as_str())
-            .unwrap_or("shadow")
-            .into(),
-        json.get("level")
-            .and_then(|v| v.as_str())
-            .unwrap_or("conservative")
-            .into(),
-        json.get("threshold")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.82),
-    )
 }
 
 #[cfg(test)]
@@ -1073,6 +1347,255 @@ mod tests {
         vault::init_vault(Some(root.clone()), false, true).unwrap();
         let err = autopilot_promote(Some(root), "conservative").unwrap_err();
         assert!(err.to_string().contains("promotion denied"));
+    }
+
+    #[test]
+    fn record_decision_never_persists_secret_text() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+
+        record_decision(RecordDecisionArgs {
+            decision_id: None,
+            chosen: Some("api_key=abcdef1234567890".into()),
+            was_asked: Some(false),
+            vault: Some(root.clone()),
+        })
+        .unwrap();
+
+        let ledger = fs::read_to_string(root.join("90-calibration/decision-ledger.jsonl")).unwrap();
+        assert!(!ledger.contains("abcdef1234567890"));
+        assert!(ledger.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn packet_filename_rejects_path_components() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+
+        let err = learn_feedback(LearnFeedbackArgs {
+            decision_id: "../escaped".into(),
+            correction: "always ask before publishing".into(),
+            vault: Some(root.clone()),
+        })
+        .unwrap_err();
+
+        assert!(err.to_string().contains("invalid decision id"));
+        assert!(!root.join("99-meta/escaped").exists());
+    }
+
+    #[test]
+    fn feedback_rejects_unknown_decision_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+
+        let err = learn_feedback(LearnFeedbackArgs {
+            decision_id: "dec_missing".into(),
+            correction: "always ask before publishing".into(),
+            vault: Some(root.clone()),
+        })
+        .unwrap_err();
+
+        assert!(err.to_string().contains("was not found"));
+        assert_eq!(
+            fs::read_dir(root.join("99-meta/pending-update-packets"))
+                .unwrap()
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn decision_ids_reject_secret_shaped_values() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+
+        let err = record_decision(RecordDecisionArgs {
+            decision_id: Some("sk-abcdefghijklmnop".into()),
+            chosen: Some("ask user".into()),
+            was_asked: Some(true),
+            vault: Some(root.clone()),
+        })
+        .unwrap_err();
+
+        assert!(err.to_string().contains("secret-like"));
+        assert!(
+            fs::read_to_string(root.join("90-calibration/decision-ledger.jsonl"))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn apply_rejects_unsafe_packet_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+        let mut forged = packet(
+            "import",
+            "decision-example",
+            "When publishing, choose ask user",
+            "strong",
+            "personal",
+            "create",
+            None,
+        );
+        forged.id = "../../escaped".into();
+        util::write_atomic(
+            &root.join("99-meta/pending-update-packets/forged.json"),
+            &serde_json::to_vec_pretty(&forged).unwrap(),
+        )
+        .unwrap();
+
+        let err = apply(ApplyArgs {
+            pending: false,
+            yes: true,
+            dry_run: false,
+            vault: Some(root),
+        })
+        .unwrap_err();
+
+        assert!(err.to_string().contains("invalid packet id"));
+    }
+
+    #[test]
+    fn apply_rejects_mislabeled_secret_packet() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+        let forged = packet(
+            "import",
+            "decision-example",
+            "api_key=abcdef1234567890",
+            "strong",
+            "personal",
+            "create",
+            None,
+        );
+        util::write_atomic(
+            &root.join("99-meta/pending-update-packets/forged.json"),
+            &serde_json::to_vec_pretty(&forged).unwrap(),
+        )
+        .unwrap();
+
+        let err = apply(ApplyArgs {
+            pending: false,
+            yes: true,
+            dry_run: false,
+            vault: Some(root),
+        })
+        .unwrap_err();
+
+        assert!(err.to_string().contains("secret-like"));
+    }
+
+    #[test]
+    fn apply_rejects_secret_in_rendered_packet_metadata() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+        let mut forged = packet(
+            "import",
+            "decision-example",
+            "When publishing, choose ask user",
+            "strong",
+            "personal",
+            "create",
+            None,
+        );
+        forged.suggested_links = vec!["api_key=abcdef1234567890".into()];
+        util::write_atomic(
+            &root.join("99-meta/pending-update-packets/forged.json"),
+            &serde_json::to_vec_pretty(&forged).unwrap(),
+        )
+        .unwrap();
+
+        let err = apply(ApplyArgs {
+            pending: false,
+            yes: true,
+            dry_run: false,
+            vault: Some(root),
+        })
+        .unwrap_err();
+
+        assert!(err.to_string().contains("secret-like"));
+    }
+
+    #[test]
+    fn apply_rejects_unknown_packet_fields_before_archiving() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+        let forged = packet(
+            "import",
+            "decision-example",
+            "When publishing, choose ask user",
+            "strong",
+            "personal",
+            "create",
+            None,
+        );
+        let mut value = serde_json::to_value(forged).unwrap();
+        value["unknownField"] = serde_json::json!("unmodeled value");
+        let packet_path = root.join("99-meta/pending-update-packets/forged.json");
+        util::write_atomic(&packet_path, &serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+
+        let err = apply(ApplyArgs {
+            pending: false,
+            yes: true,
+            dry_run: false,
+            vault: Some(root),
+        })
+        .unwrap_err();
+
+        assert!(err.to_string().contains("unknown field"));
+        assert!(packet_path.exists());
+    }
+
+    #[test]
+    fn apply_skips_packets_already_marked_applied() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+        learn_decision(LearnDecisionArgs {
+            situation: "publishing finished work".into(),
+            options: "publish|ask user".into(),
+            chosen: "ask user".into(),
+            rejected: Some("publish".into()),
+            rationale: None,
+            vault: Some(root.clone()),
+        })
+        .unwrap();
+        let apply_args = || ApplyArgs {
+            pending: false,
+            yes: true,
+            dry_run: false,
+            vault: Some(root.clone()),
+        };
+
+        apply(apply_args()).unwrap();
+        let names_after_first = pending_packet_names(&root);
+        apply(apply_args()).unwrap();
+
+        assert_eq!(pending_packet_names(&root), names_after_first);
+        assert!(
+            names_after_first
+                .iter()
+                .all(|name| !name.contains(".applied.applied.json"))
+        );
+    }
+
+    fn pending_packet_names(root: &Path) -> Vec<String> {
+        let mut names = fs::read_dir(root.join("99-meta/pending-update-packets"))
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        names.sort();
+        names
     }
 
     fn write_import_note(root: &Path, stem: &str, title: &str) {

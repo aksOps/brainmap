@@ -1,5 +1,5 @@
 use crate::cli::{DecideArgs, GateArgs, ShouldAskArgs};
-use crate::{index, privacy, util, vault};
+use crate::{index, learning, privacy, util, vault};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -156,6 +156,13 @@ pub fn evaluate(root: &Path, input: GateInput) -> Result<GateResponse> {
     let combined = privacy::redact(&input.combined());
     let lower = combined.to_lowercase();
     let decision_id = util::id("dec", &combined);
+    let autopilot = learning::autopilot_config(root);
+    let configured_gate_mode = learning::gate_mode_config(root);
+    let threshold = autopilot.threshold;
+    let learned_rule = index::matching_decision_rule(
+        root,
+        &format!("{} {}", input.situation, input.proposed_action),
+    )?;
     let mut matched = index::policy_paths_for(root, &["local", "privacy", "approval", "question"])
         .unwrap_or_default();
     matched.truncate(6);
@@ -166,7 +173,7 @@ pub fn evaluate(root: &Path, input: GateInput) -> Result<GateResponse> {
     let mut confidence = input.agent_confidence.unwrap_or(0.56).clamp(0.0, 1.0);
     let mut risk_tier = "ask_before_action".to_string();
     let mut summary = vec!["Applied deterministic policy precedence.".to_string()];
-    let threshold = 0.82;
+    let mut learned_question = None;
     let reversible = input.reversible.unwrap_or(false);
     let options = input.options.clone();
 
@@ -208,6 +215,40 @@ pub fn evaluate(root: &Path, input: GateInput) -> Result<GateResponse> {
         risk_tier = "approval_required".into();
         restrictions.push("[[40-restrictions/approval-required.md]]".into());
         summary.push("Irreversible/high-risk action requires approval.".into());
+    } else if let Some(rule) = &learned_rule {
+        let rule_link = format!("[[{}]]", rule.path);
+        if !matched.contains(&rule_link) {
+            matched.insert(0, rule_link);
+        }
+        selected = choose_learned_option(&options, &rule.chosen, &rule.rejected);
+        confidence = if rule.priority >= 300 { 0.97 } else { 0.92 };
+        if learned_rule_requires_ask(&rule.chosen) {
+            outcome = "ask_user".into();
+            recommendation = format!("Follow the learned preference to {}.", rule.chosen);
+            risk_tier = "ask_before_action".into();
+            learned_question = Some(format!(
+                "Should I follow your learned preference to {}?",
+                rule.chosen
+            ));
+        } else if let Some(choice) = &selected {
+            outcome = "proceed".into();
+            recommendation = format!("Proceed with {choice}; it matches a learned decision.");
+            risk_tier = "reversible_auto".into();
+        } else {
+            outcome = "ask_user".into();
+            recommendation = format!(
+                "The learned choice '{}' is not among the current options.",
+                rule.chosen
+            );
+            learned_question = Some(format!(
+                "Use the learned choice '{}', or select one of the current options?",
+                rule.chosen
+            ));
+        }
+        summary.push(format!(
+            "Applied compiled learned decision rule with score {:.2}.",
+            rule.score
+        ));
     } else if ambiguous(&lower, options.len()) {
         outcome = "ask_user".into();
         recommendation = "Ask one narrower question; current context is ambiguous.".into();
@@ -246,8 +287,23 @@ pub fn evaluate(root: &Path, input: GateInput) -> Result<GateResponse> {
         summary.push("Confidence exceeded threshold.".into());
     }
 
+    if outcome == "proceed" && confidence < threshold {
+        outcome = "ask_user".into();
+        recommendation = format!(
+            "Ask before proceeding; confidence {:.2} is below the configured {:.2} threshold.",
+            confidence, threshold
+        );
+        risk_tier = "ask_before_action".into();
+        summary.push("Configured confidence threshold forced ask_user.".into());
+    }
+
     if (std::env::var("BRAINMAP_DISABLE_AUTOPILOT").ok().as_deref() == Some("1")
-        || std::env::var("BRAINMAP_GATE_MODE").ok().as_deref() == Some("ask-always"))
+        || matches!(
+            std::env::var("BRAINMAP_GATE_MODE").ok().as_deref(),
+            Some("ask-always" | "suggest-only")
+        )
+        || autopilot.mode == "disabled"
+        || matches!(configured_gate_mode.as_str(), "ask-always" | "suggest-only"))
         && outcome == "proceed"
     {
         outcome = "ask_user".into();
@@ -262,7 +318,9 @@ pub fn evaluate(root: &Path, input: GateInput) -> Result<GateResponse> {
         .cloned()
         .collect::<Vec<_>>();
     let question = match outcome.as_str() {
-        "ask_user" => Some(focused_question(&input, selected.as_deref())),
+        "ask_user" => {
+            learned_question.or_else(|| Some(focused_question(&input, selected.as_deref())))
+        }
         "needs_more_context" => {
             Some("What situation, options, and risk should I use for this decision?".into())
         }
@@ -375,6 +433,32 @@ fn choose_local_first(options: &[String]) -> Option<String> {
         })
         .or_else(|| options.iter().find(|o| o.to_lowercase().contains("sqlite")))
         .cloned()
+}
+
+fn choose_learned_option(options: &[String], chosen: &str, rejected: &[String]) -> Option<String> {
+    let chosen_lower = chosen.to_lowercase();
+    options
+        .iter()
+        .filter(|option| {
+            !rejected
+                .iter()
+                .any(|rejected| option.eq_ignore_ascii_case(rejected))
+        })
+        .find(|option| {
+            let option_lower = option.to_lowercase();
+            option_lower == chosen_lower
+                || chosen_lower.contains(&option_lower)
+                || option_lower.contains(&chosen_lower)
+        })
+        .cloned()
+}
+
+fn learned_rule_requires_ask(chosen: &str) -> bool {
+    let lower = chosen.to_lowercase();
+    lower.contains("ask user")
+        || lower.contains("ask me")
+        || lower.contains("ask before")
+        || lower.contains("approval")
 }
 
 fn focused_question(input: &GateInput, selected: Option<&str>) -> String {
@@ -494,5 +578,175 @@ mod tests {
         .unwrap();
         assert_eq!(res.outcome, "ask_user");
         assert!(!res.ask_user_question.unwrap().contains("Brainmap"));
+    }
+
+    #[test]
+    fn learned_ask_decision_overrides_reversible_default() {
+        let (_tmp, root) = temp_vault();
+        crate::learning::learn_decision(crate::cli::LearnDecisionArgs {
+            situation: "renaming local temporary notes".into(),
+            options: "rename automatically|ask user".into(),
+            chosen: "ask user".into(),
+            rejected: Some("rename automatically".into()),
+            rationale: Some("explicit user preference".into()),
+            vault: Some(root.clone()),
+        })
+        .unwrap();
+        crate::learning::apply(crate::cli::ApplyArgs {
+            pending: false,
+            yes: true,
+            dry_run: false,
+            vault: Some(root.clone()),
+        })
+        .unwrap();
+
+        let res = evaluate(
+            &root,
+            GateInput {
+                intent: "plan".into(),
+                situation: "renaming local temporary notes".into(),
+                options: vec!["rename automatically".into(), "ask user".into()],
+                proposed_action: String::new(),
+                risk: "low".into(),
+                reversible: Some(true),
+                decision_type: "workflow".into(),
+                agent_confidence: None,
+                dry_run: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(res.outcome, "ask_user");
+        assert_eq!(res.selected_option.as_deref(), Some("ask user"));
+    }
+
+    #[test]
+    fn corrected_feedback_compiles_explicit_choice_and_rejection() {
+        let (_tmp, root) = temp_vault();
+        let input = || GateInput {
+            intent: "plan".into(),
+            situation: "renaming local temporary notes".into(),
+            options: vec!["rename automatically".into(), "ask user".into()],
+            proposed_action: String::new(),
+            risk: "low".into(),
+            reversible: Some(true),
+            decision_type: "workflow".into(),
+            agent_confidence: None,
+            dry_run: false,
+        };
+        let original = evaluate(&root, input()).unwrap();
+        crate::learning::learn_feedback(crate::cli::LearnFeedbackArgs {
+            decision_id: original.decision_id,
+            correction: "never rename automatically; always ask user".into(),
+            vault: Some(root.clone()),
+        })
+        .unwrap();
+        crate::learning::apply(crate::cli::ApplyArgs {
+            pending: false,
+            yes: true,
+            dry_run: false,
+            vault: Some(root.clone()),
+        })
+        .unwrap();
+
+        let corrected = evaluate(
+            &root,
+            GateInput {
+                dry_run: true,
+                ..input()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(corrected.outcome, "ask_user");
+        assert_eq!(corrected.selected_option.as_deref(), Some("ask user"));
+        assert!(
+            corrected
+                .rejected_options
+                .contains(&"rename automatically".into())
+        );
+    }
+
+    #[test]
+    fn persisted_autopilot_disable_forces_ask() {
+        let (_tmp, root) = temp_vault();
+        crate::learning::autopilot_set(Some(root.clone()), "disabled", "off", None).unwrap();
+        crate::learning::autopilot_set_threshold(Some(root.clone()), 0.95).unwrap();
+        let config = crate::learning::autopilot_config(&root);
+        assert_eq!(config.mode, "disabled");
+        assert_eq!(config.level, "off");
+        assert_eq!(config.threshold, 0.95);
+
+        let res = evaluate(
+            &root,
+            GateInput {
+                intent: "plan".into(),
+                situation: "rename a local temporary note".into(),
+                options: vec!["rename now".into(), "ask user".into()],
+                proposed_action: String::new(),
+                risk: "low".into(),
+                reversible: Some(true),
+                decision_type: "workflow".into(),
+                agent_confidence: None,
+                dry_run: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(res.outcome, "ask_user");
+    }
+
+    #[test]
+    fn persisted_ask_always_gate_mode_forces_ask() {
+        let (_tmp, root) = temp_vault();
+        crate::learning::gate_mode(Some(root.clone()), "ask-always").unwrap();
+
+        let res = evaluate(
+            &root,
+            GateInput {
+                intent: "plan".into(),
+                situation: "rename a local temporary note".into(),
+                options: vec!["rename now".into(), "ask user".into()],
+                proposed_action: String::new(),
+                risk: "low".into(),
+                reversible: Some(true),
+                decision_type: "workflow".into(),
+                agent_confidence: None,
+                dry_run: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(res.outcome, "ask_user");
+    }
+
+    #[test]
+    fn configured_threshold_applies_to_all_proceed_outcomes() {
+        let (_tmp, root) = temp_vault();
+        crate::learning::autopilot_set(Some(root.clone()), "shadow", "conservative", Some(0.95))
+            .unwrap();
+
+        let res = evaluate(
+            &root,
+            GateInput {
+                intent: "plan".into(),
+                situation: "rename a local temporary note".into(),
+                options: vec!["rename now".into(), "ask user".into()],
+                proposed_action: String::new(),
+                risk: "low".into(),
+                reversible: Some(true),
+                decision_type: "workflow".into(),
+                agent_confidence: None,
+                dry_run: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(res.outcome, "ask_user");
+        assert!(
+            res.reasoning_summary
+                .iter()
+                .any(|reason| reason.contains("threshold"))
+        );
     }
 }

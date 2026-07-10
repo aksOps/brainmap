@@ -4,6 +4,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
+const DECISION_RULE_PREFIX: &str = "<!-- brainmap-decision-rule:v1 ";
+const DECISION_RULE_SUFFIX: &str = " -->";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Note {
     pub path: PathBuf,
@@ -17,6 +20,16 @@ pub struct Note {
     pub body: String,
     pub links: Vec<String>,
     pub frontmatter: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DecisionRule {
+    pub situation: String,
+    #[serde(default)]
+    pub options: Vec<String>,
+    pub chosen: String,
+    #[serde(default)]
+    pub rejected: Vec<String>,
 }
 
 pub fn parse_note(path: PathBuf, text: &str) -> Option<Note> {
@@ -86,6 +99,23 @@ pub fn parse_wikilinks(text: &str) -> Vec<String> {
         .collect()
 }
 
+pub fn decision_rule_marker(rule: &DecisionRule) -> Result<String, serde_json::Error> {
+    Ok(format!(
+        "{DECISION_RULE_PREFIX}{}{DECISION_RULE_SUFFIX}",
+        serde_json::to_string(rule)?
+    ))
+}
+
+pub fn parse_decision_rule(text: &str) -> Option<DecisionRule> {
+    text.lines().find_map(|line| {
+        let json = line
+            .trim()
+            .strip_prefix(DECISION_RULE_PREFIX)?
+            .strip_suffix(DECISION_RULE_SUFFIX)?;
+        serde_json::from_str(json).ok()
+    })
+}
+
 pub fn frontmatter(id: &str, note_type: &str, risk_tier: &str, sensitivity: &str) -> String {
     let today = crate::util::today();
     format!(
@@ -118,5 +148,18 @@ mod tests {
             parse_wikilinks("[[foo]] [[foo|bar]] [[dir/foo]]"),
             vec!["foo", "foo", "dir/foo"]
         );
+    }
+
+    #[test]
+    fn decision_rule_marker_round_trips_structured_rule() {
+        let rule = DecisionRule {
+            situation: "publishing finished work: docs".into(),
+            options: vec!["publish".into(), "ask user".into()],
+            chosen: "ask user".into(),
+            rejected: vec!["publish".into()],
+        };
+        let marker = decision_rule_marker(&rule).unwrap();
+
+        assert_eq!(parse_decision_rule(&marker), Some(rule));
     }
 }

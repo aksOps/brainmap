@@ -540,21 +540,43 @@ pub fn init_config(dry_run: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn init_vault(vault: Option<PathBuf>, dry_run: bool, _yes: bool) -> Result<()> {
+pub fn init_vault(vault: Option<PathBuf>, dry_run: bool, yes: bool) -> Result<()> {
     let root = resolve_vault(vault);
     let files = planned_vault_files();
+    let nonempty = root.exists() && fs::read_dir(&root)?.next().is_some();
     if dry_run {
         println!("would create vault {}", root.display());
         for file in &files {
-            println!("create {}", root.join(file).display());
+            let path = root.join(file);
+            if path.exists() {
+                println!("preserve {}", path.display());
+            } else {
+                println!("create {}", path.display());
+            }
         }
         return Ok(());
     }
+    if nonempty && !yes {
+        bail!(
+            "vault {} is not empty; rerun with --yes to add missing files without overwriting existing data",
+            root.display()
+        );
+    }
     fs::create_dir_all(&root)?;
+    let mut created = 0usize;
+    let mut preserved = 0usize;
     for (rel, title, note_type, risk) in NOTE_PATHS {
         let path = root.join(rel);
-        let body = note_body(rel, title, note_type, risk);
-        util::write_atomic(&path, body.as_bytes())?;
+        if path.exists() {
+            if !path.is_file() {
+                bail!("expected vault file but found non-file: {}", path.display());
+            }
+            preserved += 1;
+        } else {
+            let body = note_body(rel, title, note_type, risk);
+            util::write_atomic(&path, body.as_bytes())?;
+            created += 1;
+        }
     }
     for dir in [
         ".brainmap/models",
@@ -566,27 +588,48 @@ pub fn init_vault(vault: Option<PathBuf>, dry_run: bool, _yes: bool) -> Result<(
     ] {
         fs::create_dir_all(root.join(dir))?;
     }
-    util::write_atomic(
-        &root.join(".brainmap/config.json"),
-        serde_json::to_vec_pretty(&default_config_json())?.as_slice(),
-    )?;
+    let config = root.join(".brainmap/config.json");
+    if config.exists() {
+        preserved += 1;
+    } else {
+        util::write_atomic(
+            &config,
+            serde_json::to_vec_pretty(&default_config_json())?.as_slice(),
+        )?;
+        created += 1;
+    }
     for rel in [
         ".brainmap/capture-queue.jsonl",
         ".brainmap/embed-queue.jsonl",
         "90-calibration/decision-ledger.jsonl",
     ] {
-        util::write_atomic(&root.join(rel), b"")?;
+        let path = root.join(rel);
+        if path.exists() {
+            preserved += 1;
+        } else {
+            util::write_atomic(&path, b"")?;
+            created += 1;
+        }
     }
-    util::write_atomic(
-        &root.join(".brainmap/index-manifest.json"),
-        serde_json::to_vec_pretty(&json!({
-            "valid": false,
-            "createdAt": util::now_iso(),
-            "schemaVersion": "decision-engine-v1"
-        }))?
-        .as_slice(),
-    )?;
-    println!("created vault {}", root.display());
+    let index_manifest = root.join(".brainmap/index-manifest.json");
+    if index_manifest.exists() {
+        preserved += 1;
+    } else {
+        util::write_atomic(
+            &index_manifest,
+            serde_json::to_vec_pretty(&json!({
+                "valid": false,
+                "createdAt": util::now_iso(),
+                "schemaVersion": "decision-engine-v2"
+            }))?
+            .as_slice(),
+        )?;
+        created += 1;
+    }
+    println!(
+        "initialized vault {}; created {created} file(s), preserved {preserved}",
+        root.display()
+    );
     Ok(())
 }
 
@@ -760,4 +803,29 @@ pub fn doctor(vault: Option<PathBuf>) -> Result<()> {
     }
     println!("hot-path: no llm, no network, no agentmemory, no embeddings");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reinitialization_requires_confirmation_and_preserves_existing_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        init_vault(Some(root.clone()), false, true).unwrap();
+        let ledger = root.join("90-calibration/decision-ledger.jsonl");
+        let policy = root.join("20-decision-frames/architecture-decisions.md");
+        fs::write(&ledger, "preserve-ledger\n").unwrap();
+        fs::write(&policy, "preserve-policy\n").unwrap();
+
+        let err = init_vault(Some(root.clone()), false, false).unwrap_err();
+        assert!(err.to_string().contains("--yes"));
+        assert_eq!(fs::read_to_string(&ledger).unwrap(), "preserve-ledger\n");
+        assert_eq!(fs::read_to_string(&policy).unwrap(), "preserve-policy\n");
+
+        init_vault(Some(root), false, true).unwrap();
+        assert_eq!(fs::read_to_string(&ledger).unwrap(), "preserve-ledger\n");
+        assert_eq!(fs::read_to_string(&policy).unwrap(), "preserve-policy\n");
+    }
 }

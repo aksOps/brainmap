@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 pub fn create(vault: Option<PathBuf>) -> Result<()> {
     let root = vault::resolve_vault(vault);
-    let id = format!("snap-{}", chrono::Utc::now().timestamp());
+    let id = util::id("snap", "snapshot");
     let dir = root.join("99-meta/backups");
     fs::create_dir_all(&dir)?;
     let out = dir.join(format!("{id}.brainmap.tar.zst"));
@@ -34,6 +34,7 @@ pub fn list(vault: Option<PathBuf>) -> Result<()> {
 }
 
 pub fn restore(vault: Option<PathBuf>, id: &str) -> Result<()> {
+    util::validate_safe_component("snapshot id", id)?;
     let root = vault::resolve_vault(vault);
     let file = root
         .join("99-meta/backups")

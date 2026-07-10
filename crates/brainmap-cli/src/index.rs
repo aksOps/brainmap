@@ -1,4 +1,4 @@
-use crate::{cli::SearchArgs, model, util, vault};
+use crate::{cli::SearchArgs, markdown, model, util, vault};
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
@@ -72,6 +72,30 @@ pub fn rebuild(root: &Path) -> Result<()> {
                     note.title
                 ],
             )?;
+            if let Some(rule) = markdown::parse_decision_rule(&note.body) {
+                let rule_path = note.path.to_string_lossy().to_string();
+                let situation_normalized = normalize_decision_text(&rule.situation);
+                let priority = decision_rule_priority(&note.note_type);
+                tx.execute(
+                    "insert into decision_rules (path,situation,situation_normalized,options,chosen,rejected,kind,priority) values (?1,?2,?3,?4,?5,?6,?7,?8)",
+                    params![
+                        rule_path,
+                        rule.situation,
+                        situation_normalized,
+                        serde_json::to_string(&rule.options)?,
+                        rule.chosen,
+                        serde_json::to_string(&rule.rejected)?,
+                        note.note_type,
+                        priority,
+                    ],
+                )?;
+                for term in decision_tokens(&situation_normalized) {
+                    tx.execute(
+                        "insert into decision_rule_terms (term,priority,path) values (?1,?2,?3)",
+                        params![term, priority, rule_path],
+                    )?;
+                }
+            }
         }
         for note in &notes {
             for link in &note.links {
@@ -86,7 +110,7 @@ pub fn rebuild(root: &Path) -> Result<()> {
             }
         }
         tx.execute(
-            "insert into index_manifest (key,value) values ('valid','true'),('createdAt',?1),('schemaVersion','decision-engine-v1')",
+            "insert into index_manifest (key,value) values ('valid','true'),('createdAt',?1),('schemaVersion','decision-engine-v2')",
             params![util::now_iso()],
         )?;
         tx.commit()?;
@@ -100,7 +124,7 @@ pub fn rebuild(root: &Path) -> Result<()> {
         serde_json::to_vec_pretty(&json!({
             "valid": true,
             "createdAt": util::now_iso(),
-            "schemaVersion": "decision-engine-v1",
+            "schemaVersion": "decision-engine-v2",
             "notes": notes.len()
         }))?
         .as_slice(),
@@ -113,7 +137,7 @@ fn create_schema(conn: &mut Connection) -> Result<()> {
         r#"
         pragma journal_mode = delete;
         create table schema_migrations (version integer primary key, applied_at text not null);
-        insert into schema_migrations (version, applied_at) values (1, datetime('now'));
+        insert into schema_migrations (version, applied_at) values (2, datetime('now'));
         create table notes (
             id text not null,
             path text primary key,
@@ -138,6 +162,23 @@ fn create_schema(conn: &mut Connection) -> Result<()> {
         create table calibration_questions as select * from notes where 0;
         create table decision_ledger (id text primary key, created_at text not null, payload text not null);
         create table update_packets (id text primary key, created_at text not null, status text not null, payload text not null);
+        create table decision_rules (
+            path text primary key,
+            situation text not null,
+            situation_normalized text not null,
+            options text not null,
+            chosen text not null,
+            rejected text not null,
+            kind text not null,
+            priority integer not null
+        );
+        create index decision_rules_situation_idx on decision_rules(situation_normalized,priority,path);
+        create table decision_rule_terms (
+            term text not null,
+            priority integer not null,
+            path text not null,
+            primary key (term,priority desc,path desc)
+        ) without rowid;
         create table graph_nodes (id text not null, path text primary key, kind text not null, title text not null);
         create table graph_edges (from_id text not null, to_id text not null, kind text not null);
         create virtual table fts_notes using fts5(path, title, body);
@@ -412,6 +453,141 @@ pub fn policy_paths_for(root: &Path, words: &[&str]) -> Result<Vec<String>> {
     Ok(out)
 }
 
+#[derive(Debug, Clone)]
+pub struct DecisionRuleMatch {
+    pub path: String,
+    pub chosen: String,
+    pub rejected: Vec<String>,
+    pub score: f64,
+    pub priority: i64,
+}
+
+pub fn matching_decision_rule(root: &Path, situation: &str) -> Result<Option<DecisionRuleMatch>> {
+    let conn = connection(root)?;
+    let compiled_tables: i64 = conn.query_row(
+        "select count(*) from sqlite_master where type='table' and name in ('decision_rules','decision_rule_terms')",
+        [],
+        |row| row.get(0),
+    )?;
+    if compiled_tables != 2 {
+        return Ok(None);
+    }
+    let normalized = normalize_decision_text(situation);
+    if normalized.is_empty() {
+        return Ok(None);
+    }
+    let exact = conn
+        .query_row(
+            "select path,chosen,rejected,priority from decision_rules where situation_normalized=?1 order by priority desc,path desc limit 1",
+            params![normalized],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )
+        .optional()?;
+    if let Some((path, chosen, rejected, priority)) = exact {
+        return Ok(Some(DecisionRuleMatch {
+            path,
+            chosen,
+            rejected: serde_json::from_str(&rejected)?,
+            score: 1.0,
+            priority,
+        }));
+    }
+
+    let mut terms = decision_tokens(&normalized).into_iter().collect::<Vec<_>>();
+    terms.sort();
+    terms.truncate(16);
+    if terms.is_empty() {
+        return Ok(None);
+    }
+    let mut stmt = conn.prepare(
+        "select r.path,r.situation,r.chosen,r.rejected,r.priority from decision_rule_terms t join decision_rules r on r.path=t.path where t.term=?1 order by t.priority desc,t.path desc limit 8",
+    )?;
+    let mut best: Option<DecisionRuleMatch> = None;
+    let mut seen_paths = HashSet::new();
+    for term in terms {
+        let rows = stmt.query_map(params![term], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
+        })?;
+        for row in rows {
+            let (path, rule_situation, chosen, rejected, priority) = row?;
+            if !seen_paths.insert(path.clone()) {
+                continue;
+            }
+            let Some(score) = decision_rule_score(&rule_situation, situation) else {
+                continue;
+            };
+            let candidate = DecisionRuleMatch {
+                path,
+                chosen,
+                rejected: serde_json::from_str(&rejected)?,
+                score,
+                priority,
+            };
+            let replace = best.as_ref().is_none_or(|current| {
+                (candidate.priority, candidate.score, &candidate.path)
+                    > (current.priority, current.score, &current.path)
+            });
+            if replace {
+                best = Some(candidate);
+            }
+        }
+    }
+    Ok(best)
+}
+
+fn decision_rule_priority(kind: &str) -> i64 {
+    match kind {
+        "corrected-decision" => 300,
+        "decision-policy" | "hard-constraint" | "approval-rule" => 200,
+        _ => 100,
+    }
+}
+
+fn decision_rule_score(rule_situation: &str, input_situation: &str) -> Option<f64> {
+    let rule_normalized = normalize_decision_text(rule_situation);
+    let input_normalized = normalize_decision_text(input_situation);
+    if rule_normalized.is_empty() || input_normalized.is_empty() {
+        return None;
+    }
+    let rule_tokens = decision_tokens(&rule_normalized);
+    let input_tokens = decision_tokens(&input_normalized);
+    let overlap = rule_tokens.intersection(&input_tokens).count();
+    let minimum_overlap = if rule_tokens.len() == 1 { 1 } else { 2 };
+    let score = overlap as f64 / rule_tokens.len().max(1) as f64;
+    (overlap >= minimum_overlap && score >= 0.5).then_some(score)
+}
+
+fn normalize_decision_text(text: &str) -> String {
+    text.to_lowercase()
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn decision_tokens(text: &str) -> HashSet<String> {
+    const STOPWORDS: &[&str] = &[
+        "the", "and", "for", "with", "from", "into", "when", "then", "that", "this", "user",
+    ];
+    text.split_whitespace()
+        .filter(|token| token.len() >= 3 && !STOPWORDS.contains(token))
+        .map(str::to_string)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -440,5 +616,29 @@ mod tests {
 
         assert_eq!(graph_path(&conn, "a", "c").unwrap(), vec!["a", "b", "c"]);
         assert!(graph_path(&conn, "a", "missing").unwrap().is_empty());
+    }
+
+    #[test]
+    fn schema_contains_compiled_decision_rules_table() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        create_schema(&mut conn).unwrap();
+
+        let tables: i64 = conn
+            .query_row(
+                "select count(*) from sqlite_master where type='table' and name in ('decision_rules','decision_rule_terms')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(tables, 2);
+    }
+
+    #[test]
+    fn short_generic_input_does_not_match_longer_rule() {
+        assert_eq!(
+            decision_rule_score("renaming local temporary notes", "local"),
+            None
+        );
     }
 }

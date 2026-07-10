@@ -116,6 +116,9 @@ fn production_smoke_cli_flow() {
     assert!(snapshots.contains(".brainmap.tar.zst"));
     let eval = ok(&["eval", "--vault", path(&root), "--suite", path(&suite)]);
     assert!(eval.contains("\"falseProceed\": 0"));
+    assert!(eval.contains("\"falseAsk\": 0"));
+    assert!(eval.contains("\"falseBlock\": 0"));
+    assert!(eval.contains("\"wrongChoice\": 0"));
 }
 
 #[test]
