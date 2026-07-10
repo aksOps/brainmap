@@ -439,17 +439,6 @@ pub fn learn_feedback(args: LearnFeedbackArgs) -> Result<()> {
 pub(crate) fn learn_feedback_quiet(args: LearnFeedbackArgs) -> Result<Option<String>> {
     let root = vault::resolve_vault(args.vault);
     validate_decision_id(&args.decision_id)?;
-    if let Some(incident) = args.incident.as_deref()
-        && !matches!(
-            incident,
-            "false-proceed"
-                | "cross-domain-application"
-                | "privacy-violation"
-                | "hard-rule-violation"
-        )
-    {
-        bail!("unsupported feedback incident type: {incident}");
-    }
     if args.correction.is_none() && args.chosen.is_none() {
         bail!("feedback requires either a correction or a chosen option");
     }
@@ -479,7 +468,7 @@ pub(crate) fn learn_feedback_quiet(args: LearnFeedbackArgs) -> Result<Option<Str
             args.decision_id
         )
     })?;
-    validate_feedback_incident(args.incident.as_deref(), &context)?;
+    validate_feedback_incident(args.incident, &context)?;
     let (chosen, rejected) = if let Some(chosen) = args.chosen {
         (
             privacy::redact(&chosen),
@@ -518,14 +507,36 @@ pub(crate) fn learn_feedback_quiet(args: LearnFeedbackArgs) -> Result<Option<Str
             "chosen": rule.chosen,
             "rejected": rule.rejected,
             "classification": "corrected-decision",
-            "incidentType": args.incident
+            "incidentType": args.incident.map(crate::cli::FeedbackIncident::as_str)
         }),
     )?;
     Ok(Some(packet.id))
 }
 
-pub fn learn_decision(args: LearnDecisionArgs) -> Result<()> {
-    let root = vault::resolve_vault(args.vault);
+#[derive(Debug, Clone)]
+pub(crate) struct PreparedDecisionUpdate {
+    packet: UpdatePacket,
+}
+
+impl PreparedDecisionUpdate {
+    pub fn preview_value(&self) -> serde_json::Value {
+        json!({
+            "path": format!(
+                "99-meta/pending-update-packets/manual-decision-{}.json",
+                self.packet.id
+            ),
+            "packet": &self.packet
+        })
+    }
+
+    pub fn write(&self, root: &Path) -> Result<()> {
+        write_packet(root, "manual-decision", &self.packet)
+    }
+}
+
+pub(crate) fn prepare_decision_update(
+    args: LearnDecisionArgs,
+) -> Result<Option<PreparedDecisionUpdate>> {
     let scope = util::resolve_learning_scope(&args.scope);
     let rejected = args
         .rejected
@@ -550,8 +561,7 @@ pub fn learn_decision(args: LearnDecisionArgs) -> Result<()> {
         None,
     );
     if packet.sensitivity == "secret" {
-        println!("secret decision rejected/redacted; no packet created");
-        return Ok(());
+        return Ok(None);
     }
     packet.decision_rule = Some(markdown::DecisionRule {
         situation: privacy::redact(&args.situation),
@@ -571,8 +581,18 @@ pub fn learn_decision(args: LearnDecisionArgs) -> Result<()> {
             .map(|value| privacy::redact(value))
             .collect(),
     });
-    write_packet(&root, "manual-decision", &packet)?;
-    println!("created decision update packet {}", packet.id);
+    Ok(Some(PreparedDecisionUpdate { packet }))
+}
+
+pub fn learn_decision(args: LearnDecisionArgs) -> Result<()> {
+    let root = vault::resolve_vault(args.vault.clone());
+    let Some(prepared) = prepare_decision_update(args)? else {
+        println!("secret decision rejected/redacted; no packet created");
+        return Ok(());
+    };
+    let packet_id = prepared.packet.id.clone();
+    prepared.write(&root)?;
+    println!("created decision update packet {packet_id}");
     Ok(())
 }
 
@@ -618,8 +638,7 @@ pub fn extract(args: ExtractArgs) -> Result<()> {
 
 pub fn apply(args: ApplyArgs) -> Result<()> {
     let root = vault::resolve_vault(args.vault);
-    let _maintenance =
-        util::FileLock::acquire(&root.join(".brainmap/locks"), "vault-maintenance.lock")?;
+    let _maintenance = util::acquire_vault_maintenance(&root)?;
     let _lock = util::FileLock::acquire(&root.join(".brainmap/locks"), "update-apply.lock")?;
     let dir = root.join("99-meta/pending-update-packets");
     fs::create_dir_all(&dir)?;
@@ -715,8 +734,7 @@ pub fn pending_updates_value(root: &Path, requested_id: Option<&str>) -> Result<
 
 pub fn apply_update_by_id(root: &Path, packet_id: &str) -> Result<()> {
     util::validate_safe_component("packet id", packet_id)?;
-    let _maintenance =
-        util::FileLock::acquire(&root.join(".brainmap/locks"), "vault-maintenance.lock")?;
+    let _maintenance = util::acquire_vault_maintenance(root)?;
     let _lock = util::FileLock::acquire(&root.join(".brainmap/locks"), "update-apply.lock")?;
     let dir = root.join("99-meta/pending-update-packets");
     for entry in fs::read_dir(&dir).with_context(|| format!("read {}", dir.display()))? {
@@ -1118,8 +1136,10 @@ struct ShadowMetrics {
     correction_rate: f64,
     false_asks: usize,
     false_ask_rate: f64,
-    collisions: usize,
-    collision_rate: f64,
+    candidate_collisions: usize,
+    candidate_collision_rate: f64,
+    confirmed_collisions: usize,
+    confirmed_collision_rate: f64,
     confirmed_cross_domain_applications: usize,
     confirmed_cross_domain_application_rate: f64,
     mean_match_margin: Option<f64>,
@@ -1169,7 +1189,7 @@ fn shadow_metrics(root: &Path) -> Result<ShadowMetrics> {
                     Some("fuzzy") => metrics.fuzzy_matches += 1,
                     _ => {}
                 }
-                metrics.collisions += usize::from(
+                metrics.candidate_collisions += usize::from(
                     event
                         .get("candidateCollision")
                         .and_then(serde_json::Value::as_bool)
@@ -1231,6 +1251,7 @@ fn shadow_metrics(root: &Path) -> Result<ShadowMetrics> {
                 {
                     Some("false-proceed") => metrics.false_proceeds += 1,
                     Some("cross-domain-application") => {
+                        metrics.confirmed_collisions += 1;
                         metrics.confirmed_cross_domain_applications += 1;
                     }
                     Some("privacy-violation") => metrics.privacy_violations += 1,
@@ -1261,7 +1282,10 @@ fn shadow_metrics(root: &Path) -> Result<ShadowMetrics> {
     metrics.agreement_rate = metric_ratio(metrics.agreements, metrics.agreement_opportunities);
     metrics.correction_rate = metric_ratio(metrics.corrections, metrics.decisions);
     metrics.false_ask_rate = metric_ratio(metrics.false_asks, metrics.decisions);
-    metrics.collision_rate = metric_ratio(metrics.collisions, metrics.decisions);
+    metrics.candidate_collision_rate =
+        metric_ratio(metrics.candidate_collisions, metrics.decisions);
+    metrics.confirmed_collision_rate =
+        metric_ratio(metrics.confirmed_collisions, metrics.decisions);
     metrics.confirmed_cross_domain_application_rate = metric_ratio(
         metrics.confirmed_cross_domain_applications,
         metrics.decisions,
@@ -1425,12 +1449,16 @@ fn decision_context(root: &Path, decision_id: &str) -> Result<Option<DecisionCon
     Ok(None)
 }
 
-fn validate_feedback_incident(incident: Option<&str>, context: &DecisionContext) -> Result<()> {
+fn validate_feedback_incident(
+    incident: Option<crate::cli::FeedbackIncident>,
+    context: &DecisionContext,
+) -> Result<()> {
+    use crate::cli::FeedbackIncident;
     match incident {
-        Some("false-proceed") if context.outcome != "proceed" => {
+        Some(FeedbackIncident::FalseProceed) if context.outcome != "proceed" => {
             bail!("false-proceed incident requires an original proceed outcome")
         }
-        Some("cross-domain-application") if !context.learned_rule_applied => {
+        Some(FeedbackIncident::CrossDomainApplication) if !context.learned_rule_applied => {
             bail!("cross-domain incident requires an applied learned decision rule")
         }
         _ => Ok(()),
@@ -1835,7 +1863,10 @@ mod tests {
         assert_eq!(metrics["agreements"], 1);
         assert_eq!(metrics["corrections"], 1);
         assert_eq!(metrics["falseAsks"], 1);
-        assert_eq!(metrics["collisions"], 1);
+        assert_eq!(metrics["candidateCollisions"], 1);
+        assert_eq!(metrics["candidateCollisionRate"], 0.5);
+        assert_eq!(metrics["confirmedCollisions"], 1);
+        assert_eq!(metrics["confirmedCollisionRate"], 0.5);
         assert_eq!(metrics["confirmedCrossDomainApplications"], 1);
         assert_eq!(metrics["confirmedCrossDomainApplicationRate"], 0.5);
         assert_eq!(metrics["falseProceeds"], 0);
@@ -1843,6 +1874,7 @@ mod tests {
         assert_eq!(metrics["latencyP95Ms"], 0.5);
         assert_eq!(metrics["observationDays"], 9.0);
         assert_eq!(metrics["rawPromptsRetained"], false);
+        assert!(metrics.get("collisions").is_none());
         let serialized = serde_json::to_string(&status).unwrap();
         assert!(!serialized.contains("do-not-emit"));
     }

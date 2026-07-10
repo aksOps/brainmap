@@ -7,6 +7,34 @@ use std::io::{self, Write};
 
 const SCHEMA_VERSION: &str = "brainmap-onboarding-v1";
 
+struct CalibrationTemplate {
+    question: &'static str,
+    situation: &'static str,
+    decision_type: &'static str,
+    options: &'static [&'static str],
+}
+
+const CALIBRATIONS: &[CalibrationTemplate] = &[
+    CalibrationTemplate {
+        question: "When this project declares a formatter, what should Brainmap prefer?",
+        situation: "When a project declares a formatter, choose the formatter policy",
+        decision_type: "tooling",
+        options: &["follow project configuration", "ask user"],
+    },
+    CalibrationTemplate {
+        question: "When this project declares a test command, what should Brainmap prefer?",
+        situation: "When a project declares a test command, choose the test policy",
+        decision_type: "workflow",
+        options: &["follow project configuration", "ask user"],
+    },
+    CalibrationTemplate {
+        question: "Without an existing preference, how should Brainmap handle a dependency change?",
+        situation: "Choose how to handle a dependency change without an existing preference",
+        decision_type: "dependencies",
+        options: &["ask user", "make the smallest reversible change"],
+    },
+];
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct OnboardingAnswers {
@@ -34,6 +62,11 @@ struct OnboardingDecision {
     free_text: Option<String>,
 }
 
+enum PreparedOnboardingDecision {
+    Executable(Box<learning::PreparedDecisionUpdate>),
+    Pending(serde_json::Value),
+}
+
 pub fn run(args: OnboardArgs) -> Result<()> {
     let root = vault::resolve_vault(args.vault);
     let (mut answers, interactive) = if let Some(path) = args.answers {
@@ -48,7 +81,8 @@ pub fn run(args: OnboardArgs) -> Result<()> {
         decision.scope = util::resolve_learning_scope(&decision.scope);
     }
     validate_answers(&answers)?;
-    print_preview(&answers);
+    let prepared = prepare_answers(&answers)?;
+    print_preview(&prepared)?;
 
     let approved = if args.dry_run {
         false
@@ -66,34 +100,16 @@ pub fn run(args: OnboardArgs) -> Result<()> {
 
     let mut executable = 0usize;
     let mut pending = 0usize;
-    for decision in &answers.decisions {
-        if let Some(chosen) = &decision.chosen {
-            learning::learn_decision(LearnDecisionArgs {
-                situation: decision.situation.clone(),
-                options: decision.options.join("|"),
-                chosen: chosen.clone(),
-                rejected: (!decision.rejected.is_empty()).then(|| decision.rejected.join("|")),
-                rationale: decision.rationale.clone(),
-                decision_type: decision.decision_type.clone(),
-                scope: decision.scope.clone(),
-                vault: Some(root.clone()),
-            })?;
-            executable += 1;
-        } else {
-            util::append_jsonl(
-                &root.join("90-calibration/pending-onboarding.jsonl"),
-                &serde_json::json!({
-                    "id": util::id("onboarding", &decision.situation),
-                    "createdAt": util::now_iso(),
-                    "schemaVersion": SCHEMA_VERSION,
-                    "status": "pending-clarification",
-                    "situation": privacy::redact(&decision.situation),
-                    "decisionType": decision.decision_type,
-                    "scope": decision.scope,
-                    "freeText": privacy::redact(decision.free_text.as_deref().unwrap_or_default())
-                }),
-            )?;
-            pending += 1;
+    for decision in &prepared {
+        match decision {
+            PreparedOnboardingDecision::Executable(update) => {
+                update.write(&root)?;
+                executable += 1;
+            }
+            PreparedOnboardingDecision::Pending(event) => {
+                util::append_jsonl(&root.join("90-calibration/pending-onboarding.jsonl"), event)?;
+                pending += 1;
+            }
         }
     }
     if executable > 0 {
@@ -121,6 +137,31 @@ fn validate_answers(answers: &OnboardingAnswers) -> Result<()> {
         bail!("onboarding answers contain no decisions");
     }
     for (index, decision) in answers.decisions.iter().enumerate() {
+        let sensitive = format!(
+            "{} {} {} {} {} {} {} {}",
+            decision.situation,
+            decision.decision_type,
+            decision.scope,
+            decision.options.join(" "),
+            decision.chosen.as_deref().unwrap_or_default(),
+            decision.rejected.join(" "),
+            decision.rationale.as_deref().unwrap_or_default(),
+            decision.free_text.as_deref().unwrap_or_default()
+        );
+        if privacy::contains_secret(&sensitive) {
+            bail!(
+                "onboarding decision {} contains secret-like material",
+                index + 1
+            );
+        }
+        markdown::validate_executable_rule_metadata(
+            "decision-example",
+            "seed",
+            &decision.decision_type,
+            &decision.scope,
+        )
+        .map_err(anyhow::Error::msg)
+        .with_context(|| format!("invalid onboarding decision {}", index + 1))?;
         if let Some(chosen) = &decision.chosen {
             let rule = markdown::DecisionRule {
                 situation: decision.situation.clone(),
@@ -142,55 +183,111 @@ fn validate_answers(answers: &OnboardingAnswers) -> Result<()> {
                 index + 1
             );
         }
-        let sensitive = format!(
-            "{} {} {} {} {} {}",
-            decision.situation,
-            decision.options.join(" "),
-            decision.chosen.as_deref().unwrap_or_default(),
-            decision.rejected.join(" "),
-            decision.rationale.as_deref().unwrap_or_default(),
-            decision.free_text.as_deref().unwrap_or_default()
-        );
-        if privacy::contains_secret(&sensitive) {
-            bail!(
-                "onboarding decision {} contains secret-like material",
-                index + 1
-            );
+    }
+    Ok(())
+}
+
+fn prepare_answers(answers: &OnboardingAnswers) -> Result<Vec<PreparedOnboardingDecision>> {
+    answers
+        .decisions
+        .iter()
+        .map(|decision| {
+            if let Some(chosen) = &decision.chosen {
+                let update = learning::prepare_decision_update(LearnDecisionArgs {
+                    situation: decision.situation.clone(),
+                    options: decision.options.join("|"),
+                    chosen: chosen.clone(),
+                    rejected: (!decision.rejected.is_empty()).then(|| decision.rejected.join("|")),
+                    rationale: decision.rationale.clone(),
+                    decision_type: decision.decision_type.clone(),
+                    scope: decision.scope.clone(),
+                    vault: None,
+                })?
+                .context("validated onboarding decision unexpectedly became secret")?;
+                Ok(PreparedOnboardingDecision::Executable(Box::new(update)))
+            } else {
+                Ok(PreparedOnboardingDecision::Pending(serde_json::json!({
+                    "id": util::id("onboarding", &decision.situation),
+                    "createdAt": util::now_iso(),
+                    "schemaVersion": SCHEMA_VERSION,
+                    "status": "pending-clarification",
+                    "situation": privacy::redact(&decision.situation),
+                    "decisionType": privacy::redact(&decision.decision_type),
+                    "scope": privacy::redact(&decision.scope),
+                    "freeText": privacy::redact(decision.free_text.as_deref().unwrap_or_default())
+                })))
+            }
+        })
+        .collect()
+}
+
+fn print_preview(prepared: &[PreparedOnboardingDecision]) -> Result<()> {
+    println!("onboarding schema: {SCHEMA_VERSION}");
+    for decision in prepared {
+        match decision {
+            PreparedOnboardingDecision::Executable(update) => println!(
+                "onboarding exact executable update preview: {}",
+                serde_json::to_string(&update.preview_value())?
+            ),
+            PreparedOnboardingDecision::Pending(event) => println!(
+                "onboarding exact pending preview: {}",
+                serde_json::to_string(&serde_json::json!({
+                    "path": "90-calibration/pending-onboarding.jsonl",
+                    "event": event
+                }))?
+            ),
         }
     }
     Ok(())
 }
 
-fn print_preview(answers: &OnboardingAnswers) {
-    println!("onboarding schema: {}", answers.schema_version);
-    for (index, decision) in answers.decisions.iter().enumerate() {
-        if let Some(chosen) = &decision.chosen {
-            println!(
-                "would learn {}: when {:?}, choose {:?}, type={}, scope={}",
-                index + 1,
-                decision.situation,
-                chosen,
-                decision.decision_type,
-                decision.scope
-            );
-        } else {
-            println!(
-                "would keep {} pending clarification: situation {:?}, type={}, scope={}",
-                index + 1,
-                decision.situation,
-                decision.decision_type,
-                decision.scope
-            );
-        }
-    }
-}
-
 fn interactive_answers() -> Result<OnboardingAnswers> {
-    println!("Brainmap local onboarding. Enter concrete recurring decisions.");
-    println!("Leave the situation empty when finished.");
+    println!("Brainmap local onboarding. Answer three predefined calibration questions.");
+    println!("Use a number or exact choice; any other answer stays pending clarification.");
     let mut decisions = Vec::new();
+    for (index, template) in CALIBRATIONS.iter().enumerate() {
+        println!(
+            "Calibration {}/{}: {}",
+            index + 1,
+            CALIBRATIONS.len(),
+            template.question
+        );
+        for (choice_index, choice) in template.options.iter().enumerate() {
+            println!("  {}) {choice}", choice_index + 1);
+        }
+        let answer = prompt_required("Answer")?;
+        let chosen = calibration_choice(template, &answer);
+        let rejected = chosen
+            .as_ref()
+            .map(|selected| {
+                template
+                    .options
+                    .iter()
+                    .filter(|choice| !choice.eq_ignore_ascii_case(selected))
+                    .map(|choice| (*choice).to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        decisions.push(OnboardingDecision {
+            situation: template.situation.into(),
+            decision_type: template.decision_type.into(),
+            scope: "project:auto".into(),
+            options: template
+                .options
+                .iter()
+                .map(|choice| (*choice).to_string())
+                .collect(),
+            chosen,
+            rejected,
+            rationale: None,
+            free_text: calibration_choice(template, &answer)
+                .is_none()
+                .then_some(answer),
+        });
+    }
+    println!("Optionally add more concrete recurring decisions.");
     loop {
-        let situation = prompt("Situation")?;
+        let situation = prompt("Additional situation (leave empty to finish)")?;
         if situation.is_empty() {
             break;
         }
@@ -227,12 +324,37 @@ fn interactive_answers() -> Result<OnboardingAnswers> {
     })
 }
 
+fn calibration_choice(template: &CalibrationTemplate, answer: &str) -> Option<String> {
+    if let Ok(index) = answer.parse::<usize>()
+        && (1..=template.options.len()).contains(&index)
+    {
+        return Some(template.options[index - 1].into());
+    }
+    template
+        .options
+        .iter()
+        .find(|choice| choice.eq_ignore_ascii_case(answer))
+        .map(|choice| (*choice).to_string())
+}
+
 fn prompt(label: &str) -> Result<String> {
     print!("{label}: ");
     io::stdout().flush()?;
     let mut value = String::new();
-    io::stdin().read_line(&mut value)?;
+    if io::stdin().read_line(&mut value)? == 0 {
+        bail!("onboarding input ended before all required prompts were answered");
+    }
     Ok(value.trim().to_string())
+}
+
+fn prompt_required(label: &str) -> Result<String> {
+    loop {
+        let value = prompt(label)?;
+        if !value.is_empty() {
+            return Ok(value);
+        }
+        println!("An answer is required for each calibration question.");
+    }
 }
 
 fn prompt_confirmation() -> Result<bool> {

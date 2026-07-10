@@ -228,6 +228,70 @@ impl Drop for FileLock {
     }
 }
 
+#[derive(Debug)]
+pub struct VaultMaintenanceGuard {
+    _lock: FileLock,
+    identity: PathBuf,
+}
+
+impl VaultMaintenanceGuard {
+    pub fn require_target(&self, root: &Path) -> Result<()> {
+        let (_, identity) = vault_lock_identity(root)?;
+        if identity != self.identity {
+            bail!(
+                "maintenance guard protects {}, not {}",
+                self.identity.display(),
+                identity.display()
+            );
+        }
+        Ok(())
+    }
+}
+
+pub fn acquire_vault_maintenance(root: &Path) -> Result<VaultMaintenanceGuard> {
+    let (canonical_parent, identity) = vault_lock_identity(root)?;
+    let key = sha256_hex(identity.to_string_lossy().as_bytes());
+    let lock = FileLock::acquire(
+        &canonical_parent.join(".brainmap-vault-locks"),
+        &format!("vault-{}.lock", &key[..32]),
+    )?;
+    Ok(VaultMaintenanceGuard {
+        _lock: lock,
+        identity,
+    })
+}
+
+fn vault_lock_identity(root: &Path) -> Result<(PathBuf, PathBuf)> {
+    let expanded = expand_tilde(root);
+    let absolute = if expanded.is_absolute() {
+        expanded
+    } else {
+        std::env::current_dir()?.join(expanded)
+    };
+    if fs::symlink_metadata(&absolute).is_ok() {
+        let identity = absolute
+            .canonicalize()
+            .with_context(|| format!("resolve vault path {}", absolute.display()))?;
+        let canonical_parent = identity
+            .parent()
+            .context("vault path must have a parent directory")?
+            .to_path_buf();
+        return Ok((canonical_parent, identity));
+    }
+    let parent = absolute
+        .parent()
+        .context("vault path must have a parent directory")?;
+    fs::create_dir_all(parent)?;
+    let canonical_parent = parent
+        .canonicalize()
+        .unwrap_or_else(|_| parent.to_path_buf());
+    let target_name = absolute
+        .file_name()
+        .context("vault path must name a directory")?;
+    let identity = canonical_parent.join(target_name);
+    Ok((canonical_parent, identity))
+}
+
 pub fn safe_archive_path(path: &Path) -> Result<()> {
     if path.is_absolute() {
         bail!("archive path is absolute: {}", path.display());
@@ -489,6 +553,61 @@ mod tests {
     }
 
     #[test]
+    fn vault_maintenance_lock_survives_directory_swap_across_processes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        let backup = tmp.path().join("BrainMap.backup");
+        let ready = tmp.path().join("vault-ready");
+        fs::create_dir(&root).unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "util::tests::vault_maintenance_lock_owner_child",
+                "--nocapture",
+            ])
+            .env("BRAINMAP_MAINTENANCE_ROOT", &root)
+            .env("BRAINMAP_MAINTENANCE_READY", &ready)
+            .spawn()
+            .unwrap();
+        for _ in 0..200 {
+            if ready.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(ready.exists(), "child did not acquire the maintenance lock");
+
+        fs::rename(&root, &backup).unwrap();
+        fs::create_dir(&root).unwrap();
+        let active_error = acquire_vault_maintenance(&root).unwrap_err();
+        assert!(active_error.to_string().contains("lock already held"));
+
+        child.kill().unwrap();
+        child.wait().unwrap();
+        acquire_vault_maintenance(&root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn vault_maintenance_lock_contends_through_a_symlink_alias() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let real_root = tmp.path().join("BrainMap");
+        let alias_root = tmp.path().join("BrainMapAlias");
+        fs::create_dir(&real_root).unwrap();
+        symlink(&real_root, &alias_root).unwrap();
+
+        let real_guard = acquire_vault_maintenance(&real_root).unwrap();
+        let alias_error = acquire_vault_maintenance(&alias_root).unwrap_err();
+        assert!(alias_error.to_string().contains("lock already held"));
+        real_guard.require_target(&alias_root).unwrap();
+
+        drop(real_guard);
+        acquire_vault_maintenance(&alias_root).unwrap();
+    }
+
+    #[test]
     fn lock_owner_child() {
         let (Ok(dir), Ok(ready)) = (
             std::env::var("BRAINMAP_LOCK_OWNER_DIR"),
@@ -497,6 +616,19 @@ mod tests {
             return;
         };
         let _lock = FileLock::acquire(Path::new(&dir), "process.lock").unwrap();
+        fs::write(ready, b"ready").unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(30));
+    }
+
+    #[test]
+    fn vault_maintenance_lock_owner_child() {
+        let (Ok(root), Ok(ready)) = (
+            std::env::var("BRAINMAP_MAINTENANCE_ROOT"),
+            std::env::var("BRAINMAP_MAINTENANCE_READY"),
+        ) else {
+            return;
+        };
+        let _lock = acquire_vault_maintenance(Path::new(&root)).unwrap();
         fs::write(ready, b"ready").unwrap();
         std::thread::sleep(std::time::Duration::from_secs(30));
     }

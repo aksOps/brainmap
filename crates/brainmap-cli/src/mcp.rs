@@ -121,7 +121,10 @@ fn tool_descriptor(name: &str) -> Value {
                 "rejected": {"type":"string"},
                 "incidentType": {
                     "type":"string",
-                    "enum":["false-proceed","cross-domain-application","privacy-violation","hard-rule-violation"]
+                    "enum": crate::cli::FeedbackIncident::ALL
+                        .iter()
+                        .map(|incident| incident.as_str())
+                        .collect::<Vec<_>>()
                 }
             }),
             json!(["decisionId"]),
@@ -229,7 +232,10 @@ fn call_tool(root: &Path, name: &str, args: Value) -> Result<Value> {
                 correction: string_arg(&args, "correction"),
                 chosen: string_arg(&args, "chosen"),
                 rejected: string_arg(&args, "rejected"),
-                incident: string_arg(&args, "incidentType"),
+                incident: string_arg(&args, "incidentType")
+                    .map(|value| crate::cli::FeedbackIncident::parse(&value))
+                    .transpose()
+                    .map_err(anyhow::Error::msg)?,
                 vault: Some(root.to_path_buf()),
             })?;
             json!({"packetCreated": packet_id.is_some(), "packetId": packet_id})

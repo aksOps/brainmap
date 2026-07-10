@@ -4,6 +4,7 @@ use crate::{
 };
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use serde::Serialize;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
@@ -235,21 +236,47 @@ pub struct LearnFeedbackArgs {
     pub chosen: Option<String>,
     #[arg(long)]
     pub rejected: Option<String>,
-    #[arg(
-        long,
-        value_parser = [
-            "false-proceed",
-            "cross-domain-application",
-            "privacy-violation",
-            "hard-rule-violation"
-        ]
-    )]
-    pub incident: Option<String>,
+    #[arg(long, value_enum)]
+    pub incident: Option<FeedbackIncident>,
     #[arg(long)]
     pub vault: Option<PathBuf>,
 }
 
-#[derive(Args)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum FeedbackIncident {
+    FalseProceed,
+    CrossDomainApplication,
+    PrivacyViolation,
+    HardRuleViolation,
+}
+
+impl FeedbackIncident {
+    pub const ALL: [Self; 4] = [
+        Self::FalseProceed,
+        Self::CrossDomainApplication,
+        Self::PrivacyViolation,
+        Self::HardRuleViolation,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::FalseProceed => "false-proceed",
+            Self::CrossDomainApplication => "cross-domain-application",
+            Self::PrivacyViolation => "privacy-violation",
+            Self::HardRuleViolation => "hard-rule-violation",
+        }
+    }
+
+    pub fn parse(value: &str) -> std::result::Result<Self, String> {
+        Self::ALL
+            .into_iter()
+            .find(|incident| incident.as_str() == value)
+            .ok_or_else(|| format!("unsupported feedback incident type: {value}"))
+    }
+}
+
+#[derive(Args, Clone)]
 pub struct LearnDecisionArgs {
     #[arg(long)]
     pub situation: String,
