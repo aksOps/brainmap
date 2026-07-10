@@ -81,6 +81,9 @@ jq -e '
 for scale in 1000 5000; do
   report="${evidence}/bench-${scale}.json"
   "${brainmap}" bench --vault "${temporary}/Bench-${scale}" --scale "${scale}" >"${report}"
+  jq --arg vault "<qualification-temp>/Bench-${scale}" '.vault = $vault' \
+    "${report}" >"${report}.sanitized"
+  mv "${report}.sanitized" "${report}"
   if [[ "${scale}" == "1000" ]]; then
     jq -e '
       .scaleRequested == 1000
