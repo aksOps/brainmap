@@ -566,8 +566,9 @@ fn decision_rule_score(rule_situation: &str, input_situation: &str) -> Option<f6
     let input_tokens = decision_tokens(&input_normalized);
     let overlap = rule_tokens.intersection(&input_tokens).count();
     let minimum_overlap = if rule_tokens.len() == 1 { 1 } else { 2 };
-    let score = overlap as f64 / rule_tokens.len().max(1) as f64;
-    (overlap >= minimum_overlap && score >= 0.5).then_some(score)
+    let union = rule_tokens.union(&input_tokens).count();
+    let score = overlap as f64 / union.max(1) as f64;
+    (overlap >= minimum_overlap && score >= 0.75).then_some(score)
 }
 
 fn normalize_decision_text(text: &str) -> String {
@@ -581,9 +582,18 @@ fn normalize_decision_text(text: &str) -> String {
 fn decision_tokens(text: &str) -> HashSet<String> {
     const STOPWORDS: &[&str] = &[
         "the", "and", "for", "with", "from", "into", "when", "then", "that", "this", "user",
+        "what", "which", "should", "could", "would", "please", "tool",
     ];
     text.split_whitespace()
         .filter(|token| token.len() >= 3 && !STOPWORDS.contains(token))
+        .map(|token| match token {
+            "pick" | "select" | "use" | "using" | "decide" | "deciding" | "choosing" => "choose",
+            "format" | "formatting" | "formatter" => "formatter",
+            "repo" | "codebase" | "repository" => "repository",
+            "rename" | "renaming" => "rename",
+            "publish" | "publishing" => "publish",
+            other => other,
+        })
         .map(str::to_string)
         .collect()
 }

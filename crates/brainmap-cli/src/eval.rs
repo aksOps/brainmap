@@ -13,12 +13,18 @@ struct Case {
     options: Vec<String>,
     risk: String,
     reversible: bool,
+    #[serde(default, rename = "decisionType")]
+    decision_type: Option<String>,
+    #[serde(default, rename = "proposedAction")]
+    proposed_action: Option<String>,
     #[serde(rename = "expectedOutcome")]
     expected_outcome: String,
     #[serde(rename = "expectedChoice")]
     expected_choice: Option<String>,
     #[serde(rename = "mustAskUser")]
     must_ask_user: Option<bool>,
+    #[serde(default, rename = "expectedLearnedRule")]
+    expected_learned_rule: Option<bool>,
     reason: Option<String>,
     setup: Option<CaseSetup>,
 }
@@ -35,6 +41,10 @@ struct CaseSetup {
 
 #[derive(Debug, Deserialize)]
 struct EvalDecisionRule {
+    #[serde(default)]
+    situation: Option<String>,
+    #[serde(default)]
+    options: Option<Vec<String>>,
     chosen: String,
     #[serde(default)]
     rejected: Vec<String>,
@@ -63,6 +73,7 @@ pub fn run(args: EvalArgs) -> Result<()> {
     let mut false_ask = 0usize;
     let mut false_block = 0usize;
     let mut wrong_choice = 0usize;
+    let mut wrong_rule = 0usize;
     let mut expected_asks = 0usize;
     let mut ids = Vec::new();
     let mut reasons = Vec::new();
@@ -89,10 +100,13 @@ pub fn run(args: EvalArgs) -> Result<()> {
                 intent: "would-ask-user".into(),
                 situation: case.situation.clone(),
                 options: case.options.clone(),
-                proposed_action: String::new(),
+                proposed_action: case.proposed_action.clone().unwrap_or_default(),
                 risk: case.risk.clone(),
                 reversible: Some(case.reversible),
-                decision_type: "general".into(),
+                decision_type: case
+                    .decision_type
+                    .clone()
+                    .unwrap_or_else(|| "general".into()),
                 agent_confidence: None,
                 dry_run: true,
             },
@@ -110,6 +124,15 @@ pub fn run(args: EvalArgs) -> Result<()> {
         {
             wrong_choice += 1;
         }
+        if let Some(expected) = case.expected_learned_rule {
+            let applied = res
+                .matched_policies
+                .iter()
+                .any(|path| path.contains("60-decision-examples/"));
+            if applied != expected {
+                wrong_rule += 1;
+            }
+        }
     }
     println!(
         "{}",
@@ -119,7 +142,8 @@ pub fn run(args: EvalArgs) -> Result<()> {
             "falseAsk": false_ask,
             "falseBlock": false_block,
             "wrongChoice": wrong_choice,
-            "confidenceCalibration": "deterministic-mvp",
+            "wrongRule": wrong_rule,
+            "confidenceCalibration": "match-derived-target",
             "policyCoverage": "seed-policy",
             "ambiguityDetection": true,
             "expectedAskCases": expected_asks,
@@ -139,8 +163,11 @@ fn prepare_case_vault(case: &Case, setup: &CaseSetup) -> Result<(tempfile::TempD
     for (index, rule) in setup.learned_decisions.iter().enumerate() {
         let id = format!("eval-{}-{index}", case.id);
         let marker = markdown::decision_rule_marker(&markdown::DecisionRule {
-            situation: case.situation.clone(),
-            options: case.options.clone(),
+            situation: rule
+                .situation
+                .clone()
+                .unwrap_or_else(|| case.situation.clone()),
+            options: rule.options.clone().unwrap_or_else(|| case.options.clone()),
             chosen: rule.chosen.clone(),
             rejected: rule.rejected.clone(),
         })?;

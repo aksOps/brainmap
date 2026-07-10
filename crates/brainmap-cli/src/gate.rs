@@ -621,6 +621,90 @@ mod tests {
     }
 
     #[test]
+    fn learned_rule_does_not_leak_to_a_nearby_decision() {
+        let (_tmp, root) = temp_vault();
+        crate::learning::learn_decision(crate::cli::LearnDecisionArgs {
+            situation: "Choose formatter for a Rust repository".into(),
+            options: "rustfmt|a custom formatter".into(),
+            chosen: "a custom formatter".into(),
+            rejected: Some("rustfmt".into()),
+            rationale: Some("repository-specific formatting rules".into()),
+            vault: Some(root.clone()),
+        })
+        .unwrap();
+        crate::learning::apply(crate::cli::ApplyArgs {
+            pending: false,
+            yes: true,
+            dry_run: false,
+            vault: Some(root.clone()),
+        })
+        .unwrap();
+
+        let res = evaluate(
+            &root,
+            GateInput {
+                intent: "plan".into(),
+                situation: "Choose a database for a Rust repository".into(),
+                options: vec!["SQLite".into(), "PostgreSQL".into()],
+                proposed_action: String::new(),
+                risk: "low".into(),
+                reversible: Some(true),
+                decision_type: "general".into(),
+                agent_confidence: None,
+                dry_run: true,
+            },
+        )
+        .unwrap();
+
+        assert!(
+            res.matched_policies
+                .iter()
+                .all(|policy| !policy.contains("60-decision-examples")),
+            "an unrelated learned formatter rule was reported as applied: {res:#?}"
+        );
+    }
+
+    #[test]
+    fn learned_rule_applies_to_a_supported_paraphrase() {
+        let (_tmp, root) = temp_vault();
+        crate::learning::learn_decision(crate::cli::LearnDecisionArgs {
+            situation: "Choose formatter for a Rust repository".into(),
+            options: "rustfmt|a custom formatter".into(),
+            chosen: "a custom formatter".into(),
+            rejected: Some("rustfmt".into()),
+            rationale: Some("repository-specific formatting rules".into()),
+            vault: Some(root.clone()),
+        })
+        .unwrap();
+        crate::learning::apply(crate::cli::ApplyArgs {
+            pending: false,
+            yes: true,
+            dry_run: false,
+            vault: Some(root.clone()),
+        })
+        .unwrap();
+
+        let res = evaluate(
+            &root,
+            GateInput {
+                intent: "plan".into(),
+                situation: "What formatting tool should this Rust codebase use?".into(),
+                options: vec!["rustfmt".into(), "a custom formatter".into()],
+                proposed_action: String::new(),
+                risk: "low".into(),
+                reversible: Some(true),
+                decision_type: "general".into(),
+                agent_confidence: None,
+                dry_run: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(res.outcome, "proceed");
+        assert_eq!(res.selected_option.as_deref(), Some("a custom formatter"));
+    }
+
+    #[test]
     fn corrected_feedback_compiles_explicit_choice_and_rejection() {
         let (_tmp, root) = temp_vault();
         let input = || GateInput {
