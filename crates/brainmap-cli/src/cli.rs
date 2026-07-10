@@ -1,6 +1,6 @@
 use crate::{
-    bench, context, eval, export, gate, harness, index, install, learning, mcp, model, skill,
-    snapshot, util, vault, web,
+    bench, context, eval, export, gate, harness, index, install, learning, mcp, model, onboarding,
+    skill, snapshot, util, vault, web,
 };
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -29,6 +29,7 @@ enum Command {
     BuildDecisionEngine(BuildArgs),
     #[command(name = "build-brain")]
     BuildBrain(BuildArgs),
+    Onboard(OnboardArgs),
     Gate(GateArgs),
     Context(ContextArgs),
     #[command(name = "should-ask-user")]
@@ -109,6 +110,18 @@ pub struct BuildArgs {
     pub dry_run: bool,
     #[arg(long)]
     pub file: Option<PathBuf>,
+}
+
+#[derive(Args, Clone)]
+pub struct OnboardArgs {
+    #[arg(long)]
+    pub vault: Option<PathBuf>,
+    #[arg(long)]
+    pub answers: Option<PathBuf>,
+    #[arg(long)]
+    pub dry_run: bool,
+    #[arg(long)]
+    pub yes: bool,
 }
 
 #[derive(Args, Clone)]
@@ -194,8 +207,12 @@ pub struct RecordDecisionArgs {
 pub struct LearnFeedbackArgs {
     #[arg(long)]
     pub decision_id: String,
+    #[arg(long, required_unless_present = "chosen")]
+    pub correction: Option<String>,
+    #[arg(long, required_unless_present = "correction")]
+    pub chosen: Option<String>,
     #[arg(long)]
-    pub correction: String,
+    pub rejected: Option<String>,
     #[arg(long)]
     pub vault: Option<PathBuf>,
 }
@@ -599,6 +616,7 @@ pub fn run() -> Result<()> {
         Command::BuildDecisionEngine(args) | Command::BuildBrain(args) => {
             learning::build_decision_engine(args)
         }
+        Command::Onboard(args) => onboarding::run(args),
         Command::Gate(args) => gate::cmd_gate(args),
         Command::Context(args) => context::cmd_context(args),
         Command::ShouldAskUser(args) => gate::cmd_should_ask(args),

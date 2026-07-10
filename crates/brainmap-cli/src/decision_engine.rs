@@ -27,6 +27,8 @@ pub struct DecisionResult {
     pub reasoning_summary: Vec<String>,
     #[serde(rename = "matchedPolicies")]
     pub matched_policies: Vec<String>,
+    #[serde(rename = "appliedPolicies")]
+    pub applied_policies: Vec<String>,
     #[serde(rename = "restrictionsApplied")]
     pub restrictions_applied: Vec<String>,
     #[serde(rename = "askUserQuestion")]

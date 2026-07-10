@@ -132,6 +132,92 @@ fn bench_scale_cli_reports_envelope_fields() {
     assert!(output.contains("\"contextFastMs\""));
 }
 
+#[test]
+fn onboarding_answer_file_changes_a_scoped_decision() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path().join("BrainMap");
+    let answers = tmp.path().join("answers.json");
+    std::fs::write(
+        &answers,
+        r#"{
+  "schemaVersion": "brainmap-onboarding-v1",
+  "decisions": [{
+    "situation": "Choose package manager for a JavaScript project",
+    "decisionType": "tooling",
+    "scope": "project:alpha",
+    "options": ["npm", "pnpm"],
+    "chosen": "pnpm",
+    "rejected": ["npm"],
+    "rationale": "Use one fast deterministic package manager"
+  }]
+}"#,
+    )
+    .expect("write onboarding answers");
+
+    ok(&["init-vault", "--vault", path(&root), "--yes"]);
+    let preview = ok(&[
+        "onboard",
+        "--answers",
+        path(&answers),
+        "--vault",
+        path(&root),
+        "--dry-run",
+    ]);
+    assert!(preview.contains("would learn"));
+    let before_apply = ok(&[
+        "gate",
+        "--json",
+        "--situation",
+        "Choose package manager for a JavaScript project",
+        "--options",
+        "npm|pnpm",
+        "--risk",
+        "low",
+        "--reversible",
+        "true",
+        "--decision-type",
+        "tooling",
+        "--scope",
+        "project:alpha",
+        "--vault",
+        path(&root),
+        "--dry-run",
+    ]);
+    assert!(before_apply.contains("\"outcome\": \"ask_user\""));
+    assert!(before_apply.contains("\"selectedOption\": null"));
+    let applied = ok(&[
+        "onboard",
+        "--answers",
+        path(&answers),
+        "--vault",
+        path(&root),
+        "--yes",
+    ]);
+    assert!(applied.contains("onboarding applied 1 decision"));
+
+    let gate = ok(&[
+        "gate",
+        "--json",
+        "--situation",
+        "Choose package manager for a JavaScript project",
+        "--options",
+        "npm|pnpm",
+        "--risk",
+        "low",
+        "--reversible",
+        "true",
+        "--decision-type",
+        "tooling",
+        "--scope",
+        "project:alpha",
+        "--vault",
+        path(&root),
+        "--dry-run",
+    ]);
+    assert!(gate.contains("\"selectedOption\": \"pnpm\""));
+    assert!(gate.contains("\"ruleScope\": \"project:alpha\""));
+}
+
 fn ok(args: &[&str]) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_brainmap"))
         .args(args)

@@ -282,6 +282,7 @@ mod tests {
             risk_tier: "ask_before_action".into(),
             reasoning_summary: vec![],
             matched_policies: vec![],
+            applied_policies: vec![],
             restrictions_applied: vec![],
             ask_user_question: Some("Which path should I take?".into()),
             default_if_no_answer: None,

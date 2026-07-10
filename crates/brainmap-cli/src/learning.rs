@@ -424,13 +424,20 @@ pub fn record_decision(args: RecordDecisionArgs) -> Result<()> {
 pub fn learn_feedback(args: LearnFeedbackArgs) -> Result<()> {
     let root = vault::resolve_vault(args.vault);
     validate_decision_id(&args.decision_id)?;
-    let redacted = privacy::redact(&args.correction);
+    let raw_feedback = args.correction.clone().unwrap_or_else(|| {
+        format!(
+            "choose {}; rejected {}",
+            args.chosen.as_deref().unwrap_or_default(),
+            args.rejected.as_deref().unwrap_or("none")
+        )
+    });
+    let redacted = privacy::redact(&raw_feedback);
     let mut packet = packet(
         "harness",
         "corrected-decision",
         &redacted,
         "very-strong",
-        privacy::sensitivity(&args.correction),
+        privacy::sensitivity(&raw_feedback),
         "create",
         None,
     );
@@ -438,18 +445,32 @@ pub fn learn_feedback(args: LearnFeedbackArgs) -> Result<()> {
         println!("secret feedback rejected/redacted; no packet created");
         return Ok(());
     }
-    let situation = decision_situation(&root, &args.decision_id)?.with_context(|| {
+    let context = decision_context(&root, &args.decision_id)?.with_context(|| {
         format!(
             "decision id {} was not found in the gate ledger",
             args.decision_id
         )
     })?;
-    let (chosen, rejected) = normalize_feedback_rule(&redacted);
+    let (chosen, rejected) = if let Some(chosen) = args.chosen {
+        (
+            privacy::redact(&chosen),
+            args.rejected
+                .as_deref()
+                .unwrap_or_default()
+                .split('|')
+                .map(str::trim)
+                .filter(|choice| !choice.is_empty())
+                .map(privacy::redact)
+                .collect(),
+        )
+    } else {
+        normalize_feedback_rule(&redacted)
+    };
     packet.decision_rule = Some(markdown::DecisionRule {
-        situation,
-        decision_type: None,
-        scope: None,
-        options: Vec::new(),
+        situation: context.situation,
+        decision_type: Some(context.decision_type),
+        scope: Some(context.scope),
+        options: context.options,
         chosen,
         rejected,
     });
@@ -579,8 +600,18 @@ pub fn apply(args: ApplyArgs) -> Result<()> {
         if packet.sensitivity == "secret" {
             continue;
         }
-        if args.dry_run || (!args.yes && !args.pending) {
-            println!("would apply {}", packet.id);
+        if args.dry_run || !args.yes {
+            if let Some(rule) = &packet.decision_rule {
+                println!(
+                    "would apply {}: when {:?}, choose {:?}, scope={}",
+                    packet.id,
+                    rule.situation,
+                    rule.chosen,
+                    rule.scope.as_deref().unwrap_or("global")
+                );
+            } else {
+                println!("would apply {}: {}", packet.id, packet.claim);
+            }
             continue;
         }
         let target = root
@@ -1007,7 +1038,14 @@ fn packet(
     }
 }
 
-fn decision_situation(root: &Path, decision_id: &str) -> Result<Option<String>> {
+struct DecisionContext {
+    situation: String,
+    options: Vec<String>,
+    decision_type: String,
+    scope: String,
+}
+
+fn decision_context(root: &Path, decision_id: &str) -> Result<Option<DecisionContext>> {
     let ledger = root.join("90-calibration/decision-ledger.jsonl");
     let Ok(text) = fs::read_to_string(ledger) else {
         return Ok(None);
@@ -1017,7 +1055,29 @@ fn decision_situation(root: &Path, decision_id: &str) -> Result<Option<String>> 
         if value.get("id").and_then(|value| value.as_str()) == Some(decision_id)
             && let Some(situation) = value.get("situation").and_then(|value| value.as_str())
         {
-            return Ok(Some(situation.to_string()));
+            let options = value
+                .get("options")
+                .and_then(|value| value.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|value| value.as_str().map(str::to_string))
+                .collect();
+            let decision_type = value
+                .get("decisionType")
+                .and_then(|value| value.as_str())
+                .unwrap_or("general")
+                .to_string();
+            let scope = value
+                .get("scope")
+                .and_then(|value| value.as_str())
+                .unwrap_or("global")
+                .to_string();
+            return Ok(Some(DecisionContext {
+                situation: situation.to_string(),
+                options,
+                decision_type,
+                scope,
+            }));
         }
     }
     Ok(None)
@@ -1171,7 +1231,9 @@ mod tests {
         vault::init_vault(Some(root.clone()), false, true).unwrap();
         learn_feedback(LearnFeedbackArgs {
             decision_id: "dec_1".into(),
-            correction: "api_key=abcdef1234567890".into(),
+            correction: Some("api_key=abcdef1234567890".into()),
+            chosen: None,
+            rejected: None,
             vault: Some(root.clone()),
         })
         .unwrap();
@@ -1380,7 +1442,9 @@ mod tests {
 
         let err = learn_feedback(LearnFeedbackArgs {
             decision_id: "../escaped".into(),
-            correction: "always ask before publishing".into(),
+            correction: Some("always ask before publishing".into()),
+            chosen: None,
+            rejected: None,
             vault: Some(root.clone()),
         })
         .unwrap_err();
@@ -1397,7 +1461,9 @@ mod tests {
 
         let err = learn_feedback(LearnFeedbackArgs {
             decision_id: "dec_missing".into(),
-            correction: "always ask before publishing".into(),
+            correction: Some("always ask before publishing".into()),
+            chosen: None,
+            rejected: None,
             vault: Some(root.clone()),
         })
         .unwrap_err();
@@ -1591,6 +1657,47 @@ mod tests {
             names_after_first
                 .iter()
                 .all(|name| !name.contains(".applied.applied.json"))
+        );
+    }
+
+    #[test]
+    fn applying_pending_packets_requires_explicit_yes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+        learn_decision(LearnDecisionArgs {
+            situation: "Choose package manager".into(),
+            options: "npm|pnpm".into(),
+            chosen: "pnpm".into(),
+            rejected: Some("npm".into()),
+            rationale: None,
+            decision_type: "tooling".into(),
+            scope: "global".into(),
+            vault: Some(root.clone()),
+        })
+        .unwrap();
+        let examples_before = fs::read_dir(root.join("60-decision-examples"))
+            .unwrap()
+            .count();
+
+        apply(ApplyArgs {
+            pending: true,
+            yes: false,
+            dry_run: false,
+            vault: Some(root.clone()),
+        })
+        .unwrap();
+
+        assert!(
+            pending_packet_names(&root)
+                .iter()
+                .any(|name| name.ends_with(".json"))
+        );
+        assert_eq!(
+            fs::read_dir(root.join("60-decision-examples"))
+                .unwrap()
+                .count(),
+            examples_before
         );
     }
 

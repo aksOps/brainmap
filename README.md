@@ -16,6 +16,8 @@ cargo run -- brainmap context --fast --json --vault ./tmp/BrainMap
 
 Markdown is canonical. SQLite is a rebuildable compiled index. The hot path never calls an LLM, AgentMemory, network, or embedding generator.
 
+Only validated deterministic rule markers are executable; ordinary policy prose remains context. See `docs/executable-policies.md`.
+
 ## Install
 
 ```bash

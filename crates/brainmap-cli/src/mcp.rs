@@ -128,8 +128,9 @@ fn call_tool(root: &Path, name: &str, args: Value) -> Result<Value> {
             learning::learn_feedback(crate::cli::LearnFeedbackArgs {
                 decision_id: string_arg(&args, "decisionId")
                     .context("learn feedback requires decisionId")?,
-                correction: string_arg(&args, "correction")
-                    .context("learn feedback requires correction")?,
+                correction: string_arg(&args, "correction"),
+                chosen: string_arg(&args, "chosen"),
+                rejected: string_arg(&args, "rejected"),
                 vault: Some(root.to_path_buf()),
             })?;
             json!({"packetCreated": true})

@@ -23,6 +23,7 @@ pub struct Note {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DecisionRule {
     pub situation: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -103,21 +104,70 @@ pub fn parse_wikilinks(text: &str) -> Vec<String> {
         .collect()
 }
 
-pub fn decision_rule_marker(rule: &DecisionRule) -> Result<String, serde_json::Error> {
+pub fn decision_rule_marker(rule: &DecisionRule) -> anyhow::Result<String> {
+    validate_decision_rule(rule).map_err(anyhow::Error::msg)?;
     Ok(format!(
         "{DECISION_RULE_PREFIX}{}{DECISION_RULE_SUFFIX}",
         serde_json::to_string(rule)?
     ))
 }
 
-pub fn parse_decision_rule(text: &str) -> Option<DecisionRule> {
-    text.lines().find_map(|line| {
-        let json = line
-            .trim()
-            .strip_prefix(DECISION_RULE_PREFIX)?
-            .strip_suffix(DECISION_RULE_SUFFIX)?;
-        serde_json::from_str(json).ok()
-    })
+pub fn parse_decision_rule_result(text: &str) -> Result<Option<DecisionRule>, String> {
+    let Some(line) = text
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with(DECISION_RULE_PREFIX))
+    else {
+        return Ok(None);
+    };
+    let json = line
+        .strip_prefix(DECISION_RULE_PREFIX)
+        .and_then(|value| value.strip_suffix(DECISION_RULE_SUFFIX))
+        .ok_or_else(|| "decision rule marker is missing its closing delimiter".to_string())?;
+    let rule: DecisionRule = serde_json::from_str(json)
+        .map_err(|error| format!("invalid decision rule JSON: {error}"))?;
+    validate_decision_rule(&rule)?;
+    Ok(Some(rule))
+}
+
+fn validate_decision_rule(rule: &DecisionRule) -> Result<(), String> {
+    if rule.situation.trim().is_empty() {
+        return Err("decision rule situation is empty".into());
+    }
+    if rule.chosen.trim().is_empty() {
+        return Err("decision rule chosen option is empty".into());
+    }
+    for (label, value) in [
+        ("decision type", rule.decision_type.as_deref()),
+        ("scope", rule.scope.as_deref()),
+    ] {
+        if let Some(value) = value
+            && (value.is_empty()
+                || value.len() > 160
+                || !value.chars().all(|character| {
+                    character.is_ascii_alphanumeric()
+                        || matches!(character, '-' | '_' | ':' | '/' | '.')
+                }))
+        {
+            return Err(format!("decision rule {label} is invalid"));
+        }
+    }
+    if !rule.options.is_empty()
+        && !rule
+            .options
+            .iter()
+            .any(|option| option.eq_ignore_ascii_case(rule.chosen.trim()))
+    {
+        return Err("decision rule chosen value is not present in options".into());
+    }
+    if rule
+        .rejected
+        .iter()
+        .any(|choice| choice.eq_ignore_ascii_case(rule.chosen.trim()))
+    {
+        return Err("decision rule cannot both choose and reject the same option".into());
+    }
+    Ok(())
 }
 
 pub fn frontmatter(id: &str, note_type: &str, risk_tier: &str, sensitivity: &str) -> String {
@@ -166,6 +216,6 @@ mod tests {
         };
         let marker = decision_rule_marker(&rule).unwrap();
 
-        assert_eq!(parse_decision_rule(&marker), Some(rule));
+        assert_eq!(parse_decision_rule_result(&marker).unwrap(), Some(rule));
     }
 }

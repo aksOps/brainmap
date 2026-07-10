@@ -12,6 +12,7 @@ mod learning;
 mod markdown;
 mod mcp;
 mod model;
+mod onboarding;
 mod privacy;
 mod skill;
 mod snapshot;

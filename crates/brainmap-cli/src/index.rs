@@ -72,7 +72,23 @@ pub fn rebuild(root: &Path) -> Result<()> {
                     note.title
                 ],
             )?;
-            if let Some(rule) = markdown::parse_decision_rule(&note.body) {
+            let compiled_rule = match markdown::parse_decision_rule_result(&note.body) {
+                Ok(rule) => rule,
+                Err(error) if executable_control_type(&note.note_type) => {
+                    bail!(
+                        "invalid executable control policy {}: {error}",
+                        note.path.display()
+                    )
+                }
+                Err(error) => {
+                    eprintln!(
+                        "warning: excluding invalid executable rule {}: {error}",
+                        note.path.display()
+                    );
+                    None
+                }
+            };
+            if let Some(rule) = compiled_rule {
                 let rule_path = note.path.to_string_lossy().to_string();
                 let situation_normalized = normalize_decision_text(&rule.situation);
                 let chosen_normalized = normalize_decision_text(&rule.chosen);
@@ -464,26 +480,6 @@ pub fn graph_orphans_cmd(vault: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-pub fn policy_paths_for(root: &Path, words: &[&str]) -> Result<Vec<String>> {
-    let conn = connection(root)?;
-    let mut out = Vec::new();
-    for word in words {
-        let like = format!("%{}%", word.to_lowercase());
-        let mut stmt = conn.prepare(
-            "select path from notes where lower(title || ' ' || body) like ?1 order by path limit 4",
-        )?;
-        let rows = stmt.query_map(params![like], |row| row.get::<_, String>(0))?;
-        for row in rows {
-            let path = row?;
-            let link = format!("[[{path}]]");
-            if !out.contains(&link) {
-                out.push(link);
-            }
-        }
-    }
-    Ok(out)
-}
-
 #[derive(Debug, Clone)]
 pub struct DecisionRuleMatch {
     pub rule_id: String,
@@ -705,6 +701,13 @@ fn decision_rule_priority(kind: &str) -> i64 {
     }
 }
 
+fn executable_control_type(note_type: &str) -> bool {
+    matches!(
+        note_type,
+        "decision-policy" | "hard-constraint" | "approval-rule" | "meta-rule"
+    )
+}
+
 fn confidence_value(confidence: &str) -> f64 {
     match confidence.to_ascii_lowercase().as_str() {
         "high" | "very-strong" => 0.9,
@@ -836,5 +839,62 @@ mod tests {
             decision_rule_score("renaming local temporary notes", "local"),
             None
         );
+    }
+
+    #[test]
+    fn malformed_executable_control_policy_fails_closed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+        let path = root.join("40-restrictions/malformed-control.md");
+        let body = format!(
+            "{}# Malformed Control\n\n<!-- brainmap-decision-rule:v1 {{not-json}} -->\n",
+            markdown::frontmatter(
+                "malformed-control",
+                "hard-constraint",
+                "never-auto",
+                "private",
+            )
+        );
+        util::write_atomic(&path, body.as_bytes()).unwrap();
+
+        let error = rebuild(&root).unwrap_err();
+        assert!(error.to_string().contains("malformed-control.md"));
+        assert!(
+            error
+                .to_string()
+                .contains("invalid executable control policy")
+        );
+    }
+
+    #[test]
+    fn malformed_non_control_rule_is_excluded_without_disabling_the_index() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+        let path = root.join("60-decision-examples/malformed-example.md");
+        let body = format!(
+            "{}# Malformed Example\n\n<!-- brainmap-decision-rule:v1 {{not-json}} -->\n",
+            markdown::frontmatter(
+                "malformed-example",
+                "decision-example",
+                "ask-before-action",
+                "personal",
+            )
+        );
+        util::write_atomic(&path, body.as_bytes()).unwrap();
+
+        rebuild(&root).unwrap();
+        assert!(matches!(
+            resolve_decision_rule(
+                &root,
+                "Malformed Example",
+                "general",
+                "global",
+                &["A".into(), "B".into()],
+            )
+            .unwrap(),
+            DecisionRuleResolution::NoMatch
+        ));
     }
 }

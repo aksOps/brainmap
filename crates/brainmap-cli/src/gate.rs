@@ -122,9 +122,7 @@ pub(crate) fn evaluate_internal(root: &Path, input: GateInput) -> Result<GateRes
         &input.scope,
         &input.options,
     )?;
-    let mut matched = index::policy_paths_for(root, &["local", "privacy", "approval", "question"])
-        .unwrap_or_default();
-    matched.truncate(6);
+    let mut matched = Vec::new();
     let mut restrictions = Vec::new();
     let mut outcome = "ask_user".to_string();
     let mut recommendation = "Ask a focused question before proceeding.".to_string();
@@ -260,12 +258,14 @@ pub(crate) fn evaluate_internal(root: &Path, input: GateInput) -> Result<GateRes
         outcome = "ask_user".into();
         recommendation = "Ask one narrower question; current context is ambiguous.".into();
         confidence = 0.58;
+        matched.push("[[70-question-triggers/ask-when-uncertain.md]]".into());
         summary.push("Ambiguity detected.".into());
     } else if local_first_storage(&lower, &options) {
         selected = choose_local_first(&options);
         outcome = "proceed".into();
         confidence = 0.9;
         risk_tier = "reversible_auto".into();
+        matched.push("[[30-tradeoff-models/local-first-vs-cloud.md]]".into());
         recommendation = selected
             .as_ref()
             .map(|s| format!("Proceed with {s}; it matches local-first v1 policy."))
@@ -276,6 +276,7 @@ pub(crate) fn evaluate_internal(root: &Path, input: GateInput) -> Result<GateRes
         recommendation = "Suppress redundant question.".into();
         confidence = 0.84;
         risk_tier = "suggest_only".into();
+        matched.push("[[70-question-triggers/suppress-redundant-questions.md]]".into());
         summary.push("Question appears redundant.".into());
     } else if input.risk.eq_ignore_ascii_case("low") && reversible {
         outcome = "ask_user".into();
@@ -338,6 +339,7 @@ pub(crate) fn evaluate_internal(root: &Path, input: GateInput) -> Result<GateRes
     } else {
         None
     };
+    let learning_chosen = selected.clone();
     let response = GateResponse {
         decision_id: decision_id.clone(),
         outcome: outcome.clone(),
@@ -351,7 +353,8 @@ pub(crate) fn evaluate_internal(root: &Path, input: GateInput) -> Result<GateRes
         match_kind,
         risk_tier,
         reasoning_summary: summary,
-        matched_policies: matched,
+        matched_policies: matched.clone(),
+        applied_policies: matched,
         restrictions_applied: restrictions,
         ask_user_question: question,
         default_if_no_answer,
@@ -359,7 +362,7 @@ pub(crate) fn evaluate_internal(root: &Path, input: GateInput) -> Result<GateRes
             "shouldRecord": !input.dry_run,
             "kind": "decision-gate",
             "situation": privacy::redact(&input.situation),
-            "chosen": null,
+            "chosen": learning_chosen,
             "confidence": confidence
         }),
     };
@@ -373,7 +376,26 @@ pub(crate) fn evaluate_internal(root: &Path, input: GateInput) -> Result<GateRes
                 "kind": "decision-gate",
                 "outcome": outcome,
                 "confidence": confidence,
-                "situation": privacy::redact(&input.situation)
+                "intent": privacy::redact(&input.intent),
+                "situation": privacy::redact(&input.situation),
+                "options": input
+                    .options
+                    .iter()
+                    .map(|option| privacy::redact(option))
+                    .collect::<Vec<_>>(),
+                "proposedAction": privacy::redact(&input.proposed_action),
+                "risk": input.risk,
+                "reversible": input.reversible,
+                "decisionType": privacy::redact(&input.decision_type),
+                "scope": privacy::redact(&input.scope),
+                "selectedOption": response.selected_option.clone(),
+                "rejectedOptions": response.rejected_options.clone(),
+                "ruleId": response.rule_id.clone(),
+                "ruleScope": response.rule_scope.clone(),
+                "matchScore": response.match_score,
+                "matchKind": response.match_kind.clone(),
+                "appliedPolicies": response.applied_policies.clone(),
+                "restrictionsApplied": response.restrictions_applied.clone()
             }),
         )?;
     }
@@ -491,6 +513,7 @@ fn focused_question(input: &GateInput, selected: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     fn temp_vault() -> (tempfile::TempDir, std::path::PathBuf) {
         let tmp = tempfile::tempdir().unwrap();
@@ -778,7 +801,7 @@ mod tests {
             &root,
             GateInput {
                 intent: "plan".into(),
-                situation: "Choose primary formatter for a Rust repository".into(),
+                situation: "Choose formatter for Rust".into(),
                 options: vec!["rustfmt".into(), "a custom formatter".into()],
                 proposed_action: String::new(),
                 risk: "low".into(),
@@ -792,7 +815,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(res.match_kind.as_deref(), Some("fuzzy"));
-        assert_eq!(res.match_score, Some(0.8));
+        assert_eq!(res.match_score, Some(0.75));
         assert_eq!(res.rule_scope.as_deref(), Some("project:alpha"));
         assert!(res.rule_id.is_some());
         assert!(res.confidence < 0.9, "{res:#?}");
@@ -986,6 +1009,145 @@ mod tests {
     }
 
     #[test]
+    fn structured_markdown_policy_is_causal_and_retirable() {
+        let (_tmp, root) = temp_vault();
+        let path = root.join("20-decision-frames/package-manager-policy.md");
+        let marker = crate::markdown::decision_rule_marker(&crate::markdown::DecisionRule {
+            situation: "Choose package manager for a JavaScript project".into(),
+            decision_type: Some("tooling".into()),
+            scope: Some("global".into()),
+            options: vec!["npm".into(), "pnpm".into()],
+            chosen: "pnpm".into(),
+            rejected: vec!["npm".into()],
+        })
+        .unwrap();
+        let active = format!(
+            "{}# Package Manager Policy\n\n## Deterministic Rule\n\n{}\n",
+            crate::markdown::frontmatter(
+                "package-manager-policy",
+                "decision-policy",
+                "reversible-auto",
+                "personal",
+            )
+            .replace("status: seed", "status: reliable"),
+            marker
+        );
+        util::write_atomic(&path, active.as_bytes()).unwrap();
+        index::rebuild(&root).unwrap();
+
+        let request = || GateInput {
+            intent: "plan".into(),
+            situation: "Choose package manager for a JavaScript project".into(),
+            options: vec!["npm".into(), "pnpm".into()],
+            proposed_action: String::new(),
+            risk: "low".into(),
+            reversible: Some(true),
+            decision_type: "tooling".into(),
+            scope: "global".into(),
+            agent_confidence: None,
+            dry_run: true,
+        };
+        let active_result = evaluate(&root, request()).unwrap();
+        assert_eq!(active_result.selected_option.as_deref(), Some("pnpm"));
+        assert_eq!(
+            active_result.applied_policies,
+            vec!["[[20-decision-frames/package-manager-policy.md]]"]
+        );
+
+        util::write_atomic(
+            &path,
+            active
+                .replace("status: reliable", "status: retired")
+                .as_bytes(),
+        )
+        .unwrap();
+        index::rebuild(&root).unwrap();
+        let retired_result = evaluate(&root, request()).unwrap();
+        assert_eq!(retired_result.outcome, "ask_user");
+        assert_eq!(retired_result.selected_option, None);
+        assert!(retired_result.applied_policies.is_empty());
+    }
+
+    #[test]
+    fn decision_ledger_records_replayable_context() {
+        let (_tmp, root) = temp_vault();
+        let result = evaluate(
+            &root,
+            GateInput {
+                intent: "plan".into(),
+                situation: "Choose v1 storage".into(),
+                options: vec![
+                    "Markdown+JSONL".into(),
+                    "SQLite".into(),
+                    "External Vector DB".into(),
+                ],
+                proposed_action: "Use Markdown+JSONL".into(),
+                risk: "low".into(),
+                reversible: Some(true),
+                decision_type: "architecture".into(),
+                scope: "project:brainmap".into(),
+                agent_confidence: Some(0.91),
+                dry_run: false,
+            },
+        )
+        .unwrap();
+        let ledger = fs::read_to_string(root.join("90-calibration/decision-ledger.jsonl")).unwrap();
+        let event: serde_json::Value =
+            serde_json::from_str(ledger.lines().last().unwrap()).unwrap();
+
+        assert_eq!(event["id"], result.decision_id);
+        assert_eq!(event["decisionType"], "architecture");
+        assert_eq!(event["scope"], "project:brainmap");
+        assert_eq!(event["selectedOption"], "Markdown+JSONL");
+        assert_eq!(event["options"].as_array().unwrap().len(), 3);
+        assert_eq!(event["appliedPolicies"].as_array().unwrap().len(), 1);
+        assert_eq!(event["proposedAction"], "Use Markdown+JSONL");
+    }
+
+    #[test]
+    fn structured_feedback_preserves_the_original_decision_scope() {
+        let (_tmp, root) = temp_vault();
+        let request = |scope: &str, dry_run: bool| GateInput {
+            intent: "plan".into(),
+            situation: "Choose package manager for a JavaScript project".into(),
+            options: vec!["npm".into(), "pnpm".into()],
+            proposed_action: String::new(),
+            risk: "low".into(),
+            reversible: Some(true),
+            decision_type: "tooling".into(),
+            scope: scope.into(),
+            agent_confidence: None,
+            dry_run,
+        };
+        let original = evaluate(&root, request("project:alpha", false)).unwrap();
+
+        crate::learning::learn_feedback(crate::cli::LearnFeedbackArgs {
+            decision_id: original.decision_id,
+            correction: None,
+            chosen: Some("npm".into()),
+            rejected: Some("pnpm".into()),
+            vault: Some(root.clone()),
+        })
+        .unwrap();
+        crate::learning::apply(crate::cli::ApplyArgs {
+            pending: false,
+            yes: true,
+            dry_run: false,
+            vault: Some(root.clone()),
+        })
+        .unwrap();
+
+        let corrected = evaluate(&root, request("project:alpha", true)).unwrap();
+        assert_eq!(corrected.outcome, "proceed");
+        assert_eq!(corrected.selected_option.as_deref(), Some("npm"));
+        assert_eq!(corrected.rule_scope.as_deref(), Some("project:alpha"));
+
+        let other_project = evaluate(&root, request("project:beta", true)).unwrap();
+        assert_eq!(other_project.outcome, "ask_user");
+        assert_eq!(other_project.rule_id, None);
+    }
+
+    #[test]
     fn corrected_feedback_compiles_explicit_choice_and_rejection() {
         let (_tmp, root) = temp_vault();
         let input = || GateInput {
@@ -1003,7 +1165,9 @@ mod tests {
         let original = evaluate(&root, input()).unwrap();
         crate::learning::learn_feedback(crate::cli::LearnFeedbackArgs {
             decision_id: original.decision_id,
-            correction: "never rename automatically; always ask user".into(),
+            correction: Some("never rename automatically; always ask user".into()),
+            chosen: None,
+            rejected: None,
             vault: Some(root.clone()),
         })
         .unwrap();
