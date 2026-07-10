@@ -1,0 +1,4 @@
+$ rtk proxy bash -euo pipefail -c $'\n  first="$(sha256sum crates/brainmap-cli/brainmap.json | cut -d " " -f 1)"\n  scripts/generate-sbom.sh\n  second="$(sha256sum crates/brainmap-cli/brainmap.json | cut -d " " -f 1)"\n  scripts/generate-sbom.sh\n  third="$(sha256sum crates/brainmap-cli/brainmap.json | cut -d " " -f 1)"\n  test "${first}" = "${second}"\n  test "${second}" = "${third}"\n  git diff --exit-code -- crates/brainmap-cli/brainmap.json\n  printf "first=%s\\nsecond=%s\\nthird=%s\\n" "${first}" "${second}" "${third}"\n'
+first=b3397f6812dd1895668d442a1b1df2c11fcbb78ce129fbf72c809f97613d8ec6
+second=b3397f6812dd1895668d442a1b1df2c11fcbb78ce129fbf72c809f97613d8ec6
+third=b3397f6812dd1895668d442a1b1df2c11fcbb78ce129fbf72c809f97613d8ec6

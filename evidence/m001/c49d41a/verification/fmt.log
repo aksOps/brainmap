@@ -1,0 +1,1 @@
+$ rtk proxy cargo fmt --all --check

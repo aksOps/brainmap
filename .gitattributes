@@ -1,0 +1,2 @@
+# Captured verification logs are immutable, checksummed evidence.
+evidence/**/*.log -whitespace

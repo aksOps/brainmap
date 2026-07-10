@@ -1,0 +1,36 @@
+{
+  "decisionId": "dec_1783681949233_a9366a6edf02",
+  "outcome": "proceed",
+  "recommendation": "Proceed with prettier; it matches a learned decision.",
+  "selectedOption": "prettier",
+  "rejectedOptions": [
+    "biome"
+  ],
+  "confidence": 0.97,
+  "ruleId": "upd_1783681945669_a10ceca3ebab",
+  "ruleScope": "project:restore-fault-qualification",
+  "matchScore": 1.0,
+  "matchKind": "exact",
+  "candidateCollision": false,
+  "riskTier": "reversible_auto",
+  "reasoningSummary": [
+    "Applied deterministic policy precedence.",
+    "Applied compiled learned decision rule with score 1.00."
+  ],
+  "matchedPolicies": [
+    "[[60-decision-examples/upd_1783681945669_a10ceca3ebab.md]]"
+  ],
+  "appliedPolicies": [
+    "[[60-decision-examples/upd_1783681945669_a10ceca3ebab.md]]"
+  ],
+  "restrictionsApplied": [],
+  "askUserQuestion": null,
+  "defaultIfNoAnswer": null,
+  "learningEvent": {
+    "chosen": "prettier",
+    "confidence": 0.97,
+    "kind": "decision-gate",
+    "shouldRecord": false,
+    "situation": "Choose formatter for restore fault qualification"
+  }
+}

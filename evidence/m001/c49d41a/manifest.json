@@ -1,0 +1,359 @@
+{
+  "schemaVersion": "brainmap-exact-head-evidence-v1",
+  "commit": "c49d41ac5326a71712ab5d5ecd4ec48a402d935e",
+  "commitShort": "c49d41a",
+  "sourceTree": {
+    "cleanBefore": true,
+    "cleanAfter": true,
+    "indexCleanAfter": true
+  },
+  "logs": {
+    "pathSanitized": true,
+    "reproducibility": "reproducibility.log",
+    "qualification": "qualification.log",
+    "verificationDirectory": "verification"
+  },
+  "host": "Linux 6.8.0-134-generic x86_64",
+  "toolchain": {
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)"
+  },
+  "reproducibility": {
+    "passed": true,
+    "log": "reproducibility.log",
+    "logSha256": "8f444d82447d590db3a20ad8e5bad67acadbaa05f585d42074d39385d4559024",
+    "retainedWorkBeforeCompaction": "repro-work/brainmap-repro.ATXJiJ",
+    "sourceArchive": {
+      "path": "source.tar",
+      "sha256": "e19133c4aa31b7418a298f41727f32f0cdfed5279dbe28fca798e0fc7c88f76f",
+      "sizeBytes": 1771520
+    },
+    "binaries": {
+      "brainmap": {
+        "aSha256": "cfda4b4eb5ecb4385632b1f3c7e13402b4870399ad1bf58db1632445d4d16563",
+        "bSha256": "cfda4b4eb5ecb4385632b1f3c7e13402b4870399ad1bf58db1632445d4d16563",
+        "installedSha256": "cfda4b4eb5ecb4385632b1f3c7e13402b4870399ad1bf58db1632445d4d16563",
+        "npmSha256": "cfda4b4eb5ecb4385632b1f3c7e13402b4870399ad1bf58db1632445d4d16563",
+        "sizeBytes": 41284048,
+        "aEqualsB": true,
+        "aEqualsInstalled": true,
+        "installedEqualsNpm": true
+      },
+      "brainmapd": {
+        "aSha256": "72119cea3e554648f88dfb51049dda068c6ab144ffc7f46d1772073187f67c05",
+        "bSha256": "72119cea3e554648f88dfb51049dda068c6ab144ffc7f46d1772073187f67c05",
+        "installedSha256": "72119cea3e554648f88dfb51049dda068c6ab144ffc7f46d1772073187f67c05",
+        "npmSha256": "72119cea3e554648f88dfb51049dda068c6ab144ffc7f46d1772073187f67c05",
+        "sizeBytes": 6526344,
+        "aEqualsB": true,
+        "aEqualsInstalled": true,
+        "installedEqualsNpm": true
+      }
+    },
+    "heavyIsolatedBuildTreeRemoved": true
+  },
+  "qualification": {
+    "passed": true,
+    "manifest": {
+      "schemaVersion": "brainmap-release-qualification-v1",
+      "sourceCommit": "c49d41ac5326a71712ab5d5ecd4ec48a402d935e",
+      "sourceTreeDirty": false,
+      "startedAt": "2026-07-10T11:12:10Z",
+      "completedAt": "2026-07-10T11:12:30Z",
+      "host": "Linux 6.8.0-134-generic x86_64",
+      "toolchain": {
+        "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+        "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)"
+      },
+      "binaries": {
+        "brainmapSha256": "cfda4b4eb5ecb4385632b1f3c7e13402b4870399ad1bf58db1632445d4d16563",
+        "brainmapdSha256": "72119cea3e554648f88dfb51049dda068c6ab144ffc7f46d1772073187f67c05"
+      },
+      "portableArchiveSha256": "1e0136da1585bbe93f14f5c0018175ef595a669c5d649b9dfc958c41bbc8bba8"
+    },
+    "eval": {
+      "cases": 238,
+      "falseProceed": 0,
+      "falseAsk": 0,
+      "falseBlock": 0,
+      "wrongChoice": 0,
+      "wrongRule": 0,
+      "wrongMetadata": 0,
+      "learnedRuleRecall": {
+        "exact": 1.0,
+        "exactCorrect": 6,
+        "exactExpected": 6,
+        "negativeCorrect": 207,
+        "negativeExpected": 207,
+        "negativeSpecificity": 1.0,
+        "paraphraseCorrect": 10,
+        "paraphraseExpected": 10,
+        "supportedParaphrase": 1.0
+      }
+    },
+    "benchmarks": [
+      {
+        "scaleRequested": 1000,
+        "executableRules": 1000,
+        "gateIterations": 200,
+        "gateP50Ms": 2.558,
+        "gateP95Ms": 2.809,
+        "gateMaxMs": 3.954,
+        "indexRebuildMs": 135,
+        "contextFastMs": 1,
+        "candidateBounds": {
+          "executableRules": 5000,
+          "maximumExactRows": 33,
+          "maximumFuzzyRowsScored": 40,
+          "queryTerms": 16,
+          "requestOptions": 32,
+          "retrieval": "actual-rule-term-postings",
+          "rowsPerTerm": 5000,
+          "unavailableChoices": 8
+        },
+        "hotPath": {
+          "agentMemory": false,
+          "embeddingGeneration": false,
+          "llm": false,
+          "modelLoad": false,
+          "network": false
+        },
+        "qualified": {
+          "gateP95": true,
+          "indexRebuild": true
+        }
+      },
+      {
+        "scaleRequested": 5000,
+        "executableRules": 5000,
+        "gateIterations": 200,
+        "gateP50Ms": 9.892,
+        "gateP95Ms": 10.696,
+        "gateMaxMs": 15.172,
+        "indexRebuildMs": 497,
+        "contextFastMs": 8,
+        "candidateBounds": {
+          "executableRules": 5000,
+          "maximumExactRows": 33,
+          "maximumFuzzyRowsScored": 40,
+          "queryTerms": 16,
+          "requestOptions": 32,
+          "retrieval": "actual-rule-term-postings",
+          "rowsPerTerm": 5000,
+          "unavailableChoices": 8
+        },
+        "hotPath": {
+          "agentMemory": false,
+          "embeddingGeneration": false,
+          "llm": false,
+          "modelLoad": false,
+          "network": false
+        },
+        "qualified": {
+          "gateP95": true,
+          "indexRebuild": true
+        }
+      }
+    ],
+    "restore": {
+      "behaviorPairs": [
+        {
+          "pair": "corrected",
+          "equal": true,
+          "selectedOption": "cargo test"
+        },
+        {
+          "pair": "learned",
+          "equal": true,
+          "selectedOption": "biome"
+        },
+        {
+          "pair": "policy",
+          "equal": true,
+          "selectedOption": "Markdown+JSONL"
+        }
+      ],
+      "faultStates": {
+        "injectedPhases": 8,
+        "oldComplete": 7,
+        "newComplete": 1,
+        "allCanonical": true,
+        "phases": [
+          {
+            "phase": "existing-backed-up",
+            "completeState": "old"
+          },
+          {
+            "phase": "files-written",
+            "completeState": "old"
+          },
+          {
+            "phase": "gate-checked",
+            "completeState": "old"
+          },
+          {
+            "phase": "index-rebuilt",
+            "completeState": "old"
+          },
+          {
+            "phase": "links-checked",
+            "completeState": "old"
+          },
+          {
+            "phase": "staging-activated",
+            "completeState": "new"
+          },
+          {
+            "phase": "staging-created",
+            "completeState": "old"
+          },
+          {
+            "phase": "verified",
+            "completeState": "old"
+          }
+        ]
+      },
+      "recoveredGates": {
+        "recoveredGates": 8,
+        "allUsable": true,
+        "oldSelectionCount": 7,
+        "newSelectionCount": 1,
+        "allExact": true
+      }
+    },
+    "restoreDurationRecorded": false
+  },
+  "verification": {
+    "allPassed": true,
+    "gates": {
+      "actionlint": {
+        "exitCode": 0,
+        "log": "verification/actionlint.log",
+        "logSha256": "e2096a4bdcb0c835685d02543407dff742591cb6064ae7bda1436910aaf14fa9",
+        "logBytes": 78
+      },
+      "audit": {
+        "exitCode": 0,
+        "log": "verification/audit.log",
+        "logSha256": "7912429399fcb7b145d78a569b20d46b455407f633ade65de93c8ed0d9493257",
+        "logBytes": 971
+      },
+      "bash-syntax": {
+        "exitCode": 0,
+        "log": "verification/bash-syntax.log",
+        "logSha256": "acd700cd27ea89ab79d3ff17526529bf662575e1af903ae515801a46c234b9f4",
+        "logBytes": 117
+      },
+      "cargo-package": {
+        "exitCode": 0,
+        "log": "verification/cargo-package.log",
+        "logSha256": "404fbabbe8fa5d3fee09fb60e068ed3b3067c4f777e2c31020c5f18ee42a3fb1",
+        "logBytes": 406
+      },
+      "clippy": {
+        "exitCode": 0,
+        "log": "verification/clippy.log",
+        "logSha256": "70fe47e681666fe4b0b07c8e704ef50e7c7e81cb99f4da5d0f613c6fb1540d01",
+        "logBytes": 162
+      },
+      "deny": {
+        "exitCode": 0,
+        "log": "verification/deny.log",
+        "logSha256": "ab78b69ddf8fd5d18882175358c37c5a4bba6ff64e2101392cdcec48bc221c30",
+        "logBytes": 18703
+      },
+      "fmt": {
+        "exitCode": 0,
+        "log": "verification/fmt.log",
+        "logSha256": "3ff667016693ced8ec2e8302581ed810a22b79f6b4ea6d23ac5928c109175494",
+        "logBytes": 36
+      },
+      "host-toolchain": {
+        "exitCode": 0,
+        "log": "verification/host-toolchain.log",
+        "logSha256": "9db95ac857d5f055525fe9d6252a385b905dedf117b283cd1440cbedb0165962",
+        "logBytes": 887
+      },
+      "npm-pack-dry-run": {
+        "exitCode": 0,
+        "log": "verification/npm-pack-dry-run.log",
+        "logSha256": "50f2fc724782b2eb57494280090a446819857d1e374f54435f88a61639e54389",
+        "logBytes": 629
+      },
+      "npm-prepare": {
+        "exitCode": 0,
+        "log": "verification/npm-prepare.log",
+        "logSha256": "9e9340a30479d2097ea78d1b016ec82a323de4a4c74673a268c9f142fde1507f",
+        "logBytes": 43
+      },
+      "npm-test": {
+        "exitCode": 0,
+        "log": "verification/npm-test.log",
+        "logSha256": "54522ac9c3368852d42fe770586238c5a52844f2be4e54b8a17580a99010e1da",
+        "logBytes": 159
+      },
+      "sbom-byte-identity": {
+        "exitCode": 0,
+        "log": "verification/sbom-byte-identity.log",
+        "logSha256": "06a51da63197290a7f479343639a258e4a6228074ccbaa188a05606995e85b81",
+        "logBytes": 747
+      },
+      "shellcheck": {
+        "exitCode": 0,
+        "log": "verification/shellcheck.log",
+        "logSha256": "cfe8fc110b683a71e0025cd6965c27b5f9cf33afe350885783eb459a342fbfcc",
+        "logBytes": 120
+      },
+      "vendor-audit": {
+        "exitCode": 0,
+        "log": "verification/vendor-audit.log",
+        "logSha256": "59dbe42b4c048e20c7eb1a5d5b142d0e50f57d4f21ee3365dbc36d5a75ee4431",
+        "logBytes": 594
+      },
+      "vendor-tests": {
+        "exitCode": 0,
+        "log": "verification/vendor-tests.log",
+        "logSha256": "f2d7a251569b9fa6cd99d532e14d8e6d61bdf7f3093de1f509737480969d12ca",
+        "logBytes": 453
+      },
+      "workspace-tests": {
+        "exitCode": 0,
+        "log": "verification/workspace-tests.log",
+        "logSha256": "76d72a0bb3b0417e16053f0d5b11c03749a59f57e75d30f2083e42f0a6d56b04",
+        "logBytes": 27944
+      }
+    },
+    "workspaceTestsPassed": 152,
+    "vendorTestsPassed": 2,
+    "audit": {
+      "vulnerabilities": 0,
+      "allowedWarnings": 3
+    },
+    "vendorAudit": {
+      "vulnerabilities": 0,
+      "allowedWarnings": 1,
+      "lockSha256": "cfb8646aa89ca449e67f2918af6f0f07a415d9212ff5abaa20f878e9f2b7005b"
+    },
+    "dependencyPolicy": {
+      "advisories": true,
+      "bans": true,
+      "licenses": true,
+      "sources": true
+    },
+    "cargoPackage": {
+      "files": 33,
+      "verifiedBuild": true
+    },
+    "npmPackage": {
+      "files": 4,
+      "testsPassed": true,
+      "dryRunPassed": true,
+      "unpackedSizeBytes": 47811359
+    },
+    "sbom": {
+      "sha256": "b3397f6812dd1895668d442a1b1df2c11fcbb78ce129fbf72c809f97613d8ec6",
+      "threeWayByteIdentity": true
+    },
+    "vendorLockUnchanged": true
+  }
+}

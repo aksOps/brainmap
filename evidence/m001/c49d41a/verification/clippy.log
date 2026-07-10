@@ -1,0 +1,2 @@
+$ rtk proxy cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s

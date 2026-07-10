@@ -1,0 +1,680 @@
+$ rtk proxy cargo test --locked --workspace --all-targets --all-features
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/brainmap_cli-32579cc93123cc60)
+
+running 135 tests
+test bench::tests::scale_generation_replaces_only_benchmark_dir ... ok
+test bench::tests::scale_notes_are_valid_markdown_notes ... ok
+test context::tests::fast_context_reads_index ... ok
+test decision_engine_impl::tests::decision_ledger_records_replayable_context ... ok
+test decision_engine_impl::tests::ambiguous_asks ... ok
+test decision_engine_impl::tests::configured_threshold_applies_to_all_proceed_outcomes ... ok
+test decision_engine_impl::tests::empty_options_question_hides_policy_layer ... ok
+test decision_engine_impl::tests::corrected_feedback_compiles_explicit_choice_and_rejection ... ok
+test decision_engine_impl::tests::equally_relevant_conflicting_rules_return_ambiguity ... ok
+test decision_engine_impl::tests::learned_ask_decision_overrides_reversible_default ... ok
+test decision_engine_impl::tests::fuzzy_learned_result_exposes_match_evidence_and_calibrated_confidence ... ok
+test decision_engine_impl::tests::learned_rule_applies_to_a_supported_paraphrase ... ok
+test decision_engine_impl::tests::learned_rule_does_not_leak_to_a_nearby_decision ... ok
+test decision_engine_impl::tests::low_risk_storage_proceeds ... ok
+test decision_engine_impl::tests::hundred_nearby_decisions_do_not_apply_a_formatter_rule ... ok
+test decision_engine_impl::tests::persisted_ask_always_gate_mode_forces_ask ... ok
+test decision_engine_impl::tests::persisted_autopilot_disable_forces_ask ... ok
+test decision_engine_impl::tests::option_order_and_repeated_evaluation_do_not_change_substantive_results ... ok
+test decision_engine_impl::tests::project_scoped_rule_does_not_leak_to_another_project ... ok
+test eval::tests::expected_choice_distinguishes_omitted_null_and_selected_values ... ok
+test decision_engine_impl::tests::secrets_block ... ok
+test decision_engine_impl::tests::seed_storage_preference_is_a_retirable_compiled_markdown_policy ... ok
+test decision_engine_impl::tests::unlearned_low_risk_decision_does_not_select_the_first_option ... ok
+test decision_engine_impl::tests::structured_feedback_preserves_the_original_decision_scope ... ok
+test export::tests::export_rejects_case_colliding_source_files ... ok
+test decision_engine_impl::tests::structured_markdown_policy_is_causal_and_retirable ... ok
+test export::tests::exports_reject_secret_like_archive_paths ... ok
+test export::tests::exports_reject_secret_like_non_utf8_content ... ok
+test export::tests::encrypted_export_verify_restore ... ok
+test export::tests::exports_declare_current_compiled_schema ... ok
+test export::tests::guarded_restore_rejects_a_guard_for_another_vault ... ok
+test export::tests::export_verify_restore ... ok
+test export::tests::portable_and_full_exports_reject_secret_files_while_share_safe_skips_them ... ok
+test export::tests::portable_exports_exclude_snapshot_archives ... ok
+test export::tests::index_snapshot_and_restore_share_the_external_maintenance_lock ... ok
+test export::tests::verify_rejects_case_folded_portable_collisions ... ok
+test export::tests::verify_rejects_duplicate_archive_entries ... ok
+test export::tests::verify_rejects_lexical_alias_archive_entries ... ok
+test export::tests::verify_rejects_secret_bearing_archive_content_before_restore ... ok
+test export::tests::verify_rejects_secret_like_manifest_and_archive_paths ... ok
+test export::tests::verify_rejects_secret_like_manifest_metadata ... ok
+test export::tests::verify_rejects_trailing_archive_bytes ... ok
+test harness::tests::golden_codex_and_claude_hook_payloads_map_to_the_safety_contract ... ok
+test harness::tests::golden_generic_stdio_payload_maps_every_contract_field ... ok
+test harness::tests::hook_blocks_pre_tool_approval_but_not_prompt_advice ... ok
+test harness::tests::hook_marks_destructive_tool_use_irreversible ... ok
+test harness::tests::parses_array_and_pipe_options ... ok
+test export::tests::verify_rejects_unknown_decision_engine_schema ... ok
+test harness::tests::user_prompt_advice_hides_policy_layer ... ok
+test index::tests::confidence_uses_scope_compatibility_and_match_margin ... ok
+test export::tests::verify_rejects_unmanifested_archive_entries ... ok
+test index::tests::domain_anchor_mismatch_blocks_high_overlap ... ok
+test export::tests::restore_validates_in_staging_before_replacing_the_target ... ok
+test index::tests::exact_lookup_plan_is_keyed_by_situation_and_choice ... ok
+test export::tests::restore_through_a_symlink_preserves_the_alias_and_replaces_the_real_vault ... ok
+test index::tests::fuzzy_lookup_plan_uses_term_postings_before_top_k ... ok
+test index::tests::graph_path_finds_multi_hop_paths ... ok
+test harness::tests::pre_tool_hook_allows_routine_actions_and_stops_destructive_actions ... ok
+test index::tests::decision_rule_resolution_rejects_unbounded_option_sets ... ok
+test index::tests::executable_control_policy_requires_explicit_frontmatter ... ok
+test index::tests::operation_anchor_mismatch_blocks_high_overlap ... ok
+test index::tests::duplicate_executable_control_ids_fail_closed ... ok
+test index::tests::malformed_executable_control_policy_fails_closed ... ok
+test index::tests::schema_contains_compiled_decision_rules_table ... ok
+test index::tests::schema_v4_candidate_bounds_cover_the_supported_envelope ... ok
+test index::tests::short_generic_input_does_not_match_longer_rule ... ok
+test index::tests::status_rejects_a_legacy_v3_compiled_index ... ok
+test index::tests::malformed_non_control_rule_is_excluded_without_disabling_the_index ... ok
+test index::tests::status_rejects_an_incomplete_database_that_only_has_notes ... ok
+test index::tests::rebuilds_index ... ok
+test index::tests::rebuild_stably_compiles_actual_rule_postings_and_anchors ... ok
+test install::tests::codex_install_and_uninstall_preserve_existing_agents_content ... ok
+test install::tests::codex_install_refuses_an_unmanaged_brainmap_mcp_table ... ok
+test install::tests::codex_mcp_config_merge_is_idempotent_and_preserves_user_toml ... ok
+test install::tests::codex_plan_installs_skill ... ok
+test install::tests::installed_skill_is_static_cli_shim ... ok
+test install::tests::merge_hooks_is_idempotent_and_preserves_existing_hooks ... ok
+test install::tests::opencode_install_preserves_json_and_existing_instructions ... ok
+test install::tests::owned_files_are_never_overwritten_or_removed_when_unmanaged ... ok
+test install::tests::uninstall_removes_only_brainmap_command_from_mixed_hook_entry ... ok
+test index::tests::mixed_duplicate_ids_fail_closed_regardless_of_path_order ... ok
+test index::tests::unknown_control_status_fails_closed ... ok
+test index::tests::text_search_never_returns_secret_notes ... ok
+test index::tests::unsupported_non_control_rule_type_is_excluded ... ok
+test learning::tests::agentmemory_export_creates_decision_packets_only ... ok
+test learning::tests::apply_rejects_mislabeled_secret_packet ... ok
+test learning::tests::apply_rejects_unknown_packet_fields_before_archiving ... ok
+test learning::tests::apply_rejects_secret_in_rendered_packet_metadata ... ok
+test learning::tests::apply_rejects_unsafe_packet_id ... ok
+test learning::tests::autopilot_promotion_requires_evidence ... ok
+test learning::tests::applying_pending_packets_requires_explicit_yes ... ok
+test learning::tests::decision_ids_reject_secret_shaped_values ... ok
+test learning::tests::apply_skips_packets_already_marked_applied ... ok
+test learning::tests::feedback_rejects_unknown_decision_id ... ok
+test learning::tests::feedback_secret_is_rejected ... ok
+test learning::tests::packet_filename_rejects_path_components ... ok
+test learning::tests::signal_filter_rejects_knowledge_facts ... ok
+test markdown::tests::decision_rule_marker_round_trips_structured_rule ... ok
+test markdown::tests::executable_status_domain_has_an_explicit_active_whitelist ... ok
+test markdown::tests::executable_statuses_follow_the_canonical_ontology ... ok
+test markdown::tests::multiple_decision_rule_markers_are_rejected ... ok
+test markdown::tests::parses_wikilinks ... ok
+test markdown::tests::unsupported_decision_rule_marker_version_is_rejected ... ok
+test markdown::tests::unsupported_scope_namespace_is_rejected ... ok
+test mcp::tests::lists_allowlisted_tools ... ok
+test learning::tests::interview_creates_packets ... ok
+test mcp::tests::mcp_rejects_arguments_outside_the_advertised_schema ... ok
+test mcp::tests::parses_content_length_frame ... ok
+test learning::tests::record_decision_never_persists_secret_text ... ok
+test learning::tests::shadow_metrics_are_aggregate_and_contain_no_raw_prompts ... ok
+test learning::tests::prune_imports_archives_knowledge_like_notes ... ok
+test mcp::tests::mcp_learning_tools_preview_and_require_approval ... ok
+test privacy::tests::redacts_api_keys_and_bearer ... ok
+test privacy::tests::redacts_private_key ... ok
+test util::tests::archive_path_normalization_rejects_windows_style_traversal ... ok
+test util::tests::automatic_learning_scope_is_project_narrow_and_stable ... ok
+test util::tests::concurrent_atomic_writes_never_share_temporary_files ... ok
+test util::tests::concurrent_identical_requests_receive_unique_ids ... ok
+test onboarding::tests::ambiguous_free_text_stays_pending_and_does_not_change_gate_behavior ... ok
+
+running 1 test
+test util::tests::file_lock_recovers_after_a_process_is_killed ... ok
+test util::tests::file_lock_recovers_after_the_owner_drops ... ok
+test util::tests::lock_owner_child ... ok
+test util::tests::portable_archive_keys_fold_case_and_reject_windows_names ... ok
+test util::tests::vault_maintenance_lock_contends_through_a_symlink_alias ... ok
+test util::tests::vault_maintenance_lock_owner_child ... ok
+
+running 1 test
+test util::tests::vault_maintenance_lock_survives_directory_swap_across_processes ... ok
+test vault::tests::reinitialization_requires_confirmation_and_preserves_existing_files ... ok
+test web::tests::request_reader_enforces_the_header_limit ... ok
+test web::tests::ui_payload_excludes_secret_notes ... ok
+test web::tests::web_host_must_be_loopback ... ok
+test model::tests::embedded_model_pack_matches_build_hash ... ok
+test export::tests::every_injected_restore_failure_leaves_a_complete_old_or_new_vault ... ok
+test util::tests::concurrent_jsonl_appends_remain_complete ... ok
+test model::tests::materializes_real_pack_and_verifies_checksums ... ok
+test model::tests::embed_rebuild_writes_vectors_and_searches ... ok
+
+test result: ok. 135 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.91s
+
+     Running unittests src/main.rs (target/debug/deps/brainmap-04b18c376192f175)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/brainmapd.rs (target/debug/deps/brainmapd-828638fe85624974)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/smoke.rs (target/debug/deps/smoke-40758cb9c4b58ccd)
+
+running 17 tests
+test brainmap_help_binary_builds ... ok
+recorded decision
+recorded decision
+{
+  "decisionId": "dec_1783681996101_ee37c4617402",
+  "outcome": "ask_user",
+  "recommendation": "No learned or executable policy selects among the current options.",
+  "selectedOption": null,
+  "rejectedOptions": [
+    "biome",
+    "prettier"
+  ],
+  "confidence": 0.56,
+  "candidateCollision": false,
+  "riskTier": "ask_before_action",
+  "reasoningSummary": [
+    "Applied deterministic policy precedence.",
+    "Option order is non-authoritative; the confidence threshold cannot select a default."
+  ],
+  "matchedPolicies": [],
+  "appliedPolicies": [],
+  "restrictionsApplied": [],
+  "askUserQuestion": "Which option should be chosen: biome, prettier?",
+  "defaultIfNoAnswer": "defer or take the cheapest reversible step",
+  "learningEvent": {
+    "chosen": null,
+    "confidence": 0.56,
+    "kind": "decision-gate",
+    "shouldRecord": true,
+    "situation": "Choose formatter for the concurrent project"
+  }
+}
+{
+  "decisionId": "dec_1783681996098_1e2dcbbbf022",
+  "outcome": "ask_user",
+  "recommendation": "No learned or executable policy selects among the current options.",
+  "selectedOption": null,
+  "rejectedOptions": [
+    "biome",
+    "prettier"
+  ],
+  "confidence": 0.56,
+  "candidateCollision": false,
+  "riskTier": "ask_before_action",
+  "reasoningSummary": [
+    "Applied deterministic policy precedence.",
+    "Option order is non-authoritative; the confidence threshold cannot select a default."
+  ],
+  "matchedPolicies": [],
+  "appliedPolicies": [],
+  "restrictionsApplied": [],
+  "askUserQuestion": "Which option should be chosen: biome, prettier?",
+  "defaultIfNoAnswer": "defer or take the cheapest reversible step",
+  "learningEvent": {
+    "chosen": null,
+    "confidence": 0.56,
+    "kind": "decision-gate",
+    "shouldRecord": true,
+    "situation": "Choose formatter for the concurrent project"
+  }
+}
+error: lock already held at <TMP>/.brainmap-vault-locks/vault-c62c82e2094fcbf3d674cce77e12bc21.lock (pid=793899): try_lock failed because the operation would block
+recorded decision
+{
+  "decisionId": "dec_1783681996117_b0015bc9fb79",
+  "outcome": "ask_user",
+  "recommendation": "No learned or executable policy selects among the current options.",
+  "selectedOption": null,
+  "rejectedOptions": [
+    "biome",
+    "prettier"
+  ],
+  "confidence": 0.56,
+  "candidateCollision": false,
+  "riskTier": "ask_before_action",
+  "reasoningSummary": [
+    "Applied deterministic policy precedence.",
+    "Option order is non-authoritative; the confidence threshold cannot select a default."
+  ],
+  "matchedPolicies": [],
+  "appliedPolicies": [],
+  "restrictionsApplied": [],
+  "askUserQuestion": "Which option should be chosen: biome, prettier?",
+  "defaultIfNoAnswer": "defer or take the cheapest reversible step",
+  "learningEvent": {
+    "chosen": null,
+    "confidence": 0.56,
+    "kind": "decision-gate",
+    "shouldRecord": true,
+    "situation": "Choose formatter for the concurrent project"
+  }
+}
+{
+  "decisionId": "dec_1783681996131_c2b613e7e77a",
+  "outcome": "ask_user",
+  "recommendation": "No learned or executable policy selects among the current options.",
+  "selectedOption": null,
+  "rejectedOptions": [
+    "biome",
+    "prettier"
+  ],
+  "confidence": 0.56,
+  "candidateCollision": false,
+  "riskTier": "ask_before_action",
+  "reasoningSummary": [
+    "Applied deterministic policy precedence.",
+    "Option order is non-authoritative; the confidence threshold cannot select a default."
+  ],
+  "matchedPolicies": [],
+  "appliedPolicies": [],
+  "restrictionsApplied": [],
+  "askUserQuestion": "Which option should be chosen: biome, prettier?",
+  "defaultIfNoAnswer": "defer or take the cheapest reversible step",
+  "learningEvent": {
+    "chosen": null,
+    "confidence": 0.56,
+    "kind": "decision-gate",
+    "shouldRecord": true,
+    "situation": "Choose formatter for the concurrent project"
+  }
+}
+{
+  "decisionId": "dec_1783681996129_8b80a407bc38",
+  "outcome": "ask_user",
+  "recommendation": "No learned or executable policy selects among the current options.",
+  "selectedOption": null,
+  "rejectedOptions": [
+    "biome",
+    "prettier"
+  ],
+  "confidence": 0.56,
+  "candidateCollision": false,
+  "riskTier": "ask_before_action",
+  "reasoningSummary": [
+    "Applied deterministic policy precedence.",
+    "Option order is non-authoritative; the confidence threshold cannot select a default."
+  ],
+  "matchedPolicies": [],
+  "appliedPolicies": [],
+  "restrictionsApplied": [],
+  "askUserQuestion": "Which option should be chosen: biome, prettier?",
+  "defaultIfNoAnswer": "defer or take the cheapest reversible step",
+  "learningEvent": {
+    "chosen": null,
+    "confidence": 0.56,
+    "kind": "decision-gate",
+    "shouldRecord": true,
+    "situation": "Choose formatter for the concurrent project"
+  }
+}
+recorded decision
+recorded decision
+{
+  "decisionId": "dec_1783681996148_c67e5d33bd7d",
+  "outcome": "ask_user",
+  "recommendation": "No learned or executable policy selects among the current options.",
+  "selectedOption": null,
+  "rejectedOptions": [
+    "biome",
+    "prettier"
+  ],
+  "confidence": 0.56,
+  "candidateCollision": false,
+  "riskTier": "ask_before_action",
+  "reasoningSummary": [
+    "Applied deterministic policy precedence.",
+    "Option order is non-authoritative; the confidence threshold cannot select a default."
+  ],
+  "matchedPolicies": [],
+  "appliedPolicies": [],
+  "restrictionsApplied": [],
+  "askUserQuestion": "Which option should be chosen: biome, prettier?",
+  "defaultIfNoAnswer": "defer or take the cheapest reversible step",
+  "learningEvent": {
+    "chosen": null,
+    "confidence": 0.56,
+    "kind": "decision-gate",
+    "shouldRecord": true,
+    "situation": "Choose formatter for the concurrent project"
+  }
+}
+recorded decision
+recorded decision
+recorded decision
+recorded decision
+{
+  "decisionId": "dec_1783681996157_3795a0729f93",
+  "outcome": "ask_user",
+  "recommendation": "No learned or executable policy selects among the current options.",
+  "selectedOption": null,
+  "rejectedOptions": [
+    "biome",
+    "prettier"
+  ],
+  "confidence": 0.56,
+  "candidateCollision": false,
+  "riskTier": "ask_before_action",
+  "reasoningSummary": [
+    "Applied deterministic policy precedence.",
+    "Option order is non-authoritative; the confidence threshold cannot select a default."
+  ],
+  "matchedPolicies": [],
+  "appliedPolicies": [],
+  "restrictionsApplied": [],
+  "askUserQuestion": "Which option should be chosen: biome, prettier?",
+  "defaultIfNoAnswer": "defer or take the cheapest reversible step",
+  "learningEvent": {
+    "chosen": null,
+    "confidence": 0.56,
+    "kind": "decision-gate",
+    "shouldRecord": true,
+    "situation": "Choose formatter for the concurrent project"
+  }
+}
+{
+  "decisionId": "dec_1783681996150_d1de9a376f7f",
+  "outcome": "ask_user",
+  "recommendation": "No learned or executable policy selects among the current options.",
+  "selectedOption": null,
+  "rejectedOptions": [
+    "biome",
+    "prettier"
+  ],
+  "confidence": 0.56,
+  "candidateCollision": false,
+  "riskTier": "ask_before_action",
+  "reasoningSummary": [
+    "Applied deterministic policy precedence.",
+    "Option order is non-authoritative; the confidence threshold cannot select a default."
+  ],
+  "matchedPolicies": [],
+  "appliedPolicies": [],
+  "restrictionsApplied": [],
+  "askUserQuestion": "Which option should be chosen: biome, prettier?",
+  "defaultIfNoAnswer": "defer or take the cheapest reversible step",
+  "learningEvent": {
+    "chosen": null,
+    "confidence": 0.56,
+    "kind": "decision-gate",
+    "shouldRecord": true,
+    "situation": "Choose formatter for the concurrent project"
+  }
+}
+{
+  "decisionId": "dec_1783681996164_bebec5686299",
+  "outcome": "ask_user",
+  "recommendation": "No learned or executable policy selects among the current options.",
+  "selectedOption": null,
+  "rejectedOptions": [
+    "biome",
+    "prettier"
+  ],
+  "confidence": 0.56,
+  "candidateCollision": false,
+  "riskTier": "ask_before_action",
+  "reasoningSummary": [
+    "Applied deterministic policy precedence.",
+    "Option order is non-authoritative; the confidence threshold cannot select a default."
+  ],
+  "matchedPolicies": [],
+  "appliedPolicies": [],
+  "restrictionsApplied": [],
+  "askUserQuestion": "Which option should be chosen: biome, prettier?",
+  "defaultIfNoAnswer": "defer or take the cheapest reversible step",
+  "learningEvent": {
+    "chosen": null,
+    "confidence": 0.56,
+    "kind": "decision-gate",
+    "shouldRecord": true,
+    "situation": "Choose formatter for the concurrent project"
+  }
+}
+recorded decision
+{
+  "decisionId": "dec_1783681996166_eb9b71a9bd6a",
+  "outcome": "ask_user",
+  "recommendation": "No learned or executable policy selects among the current options.",
+  "selectedOption": null,
+  "rejectedOptions": [
+    "biome",
+    "prettier"
+  ],
+  "confidence": 0.56,
+  "candidateCollision": false,
+  "riskTier": "ask_before_action",
+  "reasoningSummary": [
+    "Applied deterministic policy precedence.",
+    "Option order is non-authoritative; the confidence threshold cannot select a default."
+  ],
+  "matchedPolicies": [],
+  "appliedPolicies": [],
+  "restrictionsApplied": [],
+  "askUserQuestion": "Which option should be chosen: biome, prettier?",
+  "defaultIfNoAnswer": "defer or take the cheapest reversible step",
+  "learningEvent": {
+    "chosen": null,
+    "confidence": 0.56,
+    "kind": "decision-gate",
+    "shouldRecord": true,
+    "situation": "Choose formatter for the concurrent project"
+  }
+}
+{
+  "decisionId": "dec_1783681996170_fc8183df99a6",
+  "outcome": "ask_user",
+  "recommendation": "No learned or executable policy selects among the current options.",
+  "selectedOption": null,
+  "rejectedOptions": [
+    "biome",
+    "prettier"
+  ],
+  "confidence": 0.56,
+  "candidateCollision": false,
+  "riskTier": "ask_before_action",
+  "reasoningSummary": [
+    "Applied deterministic policy precedence.",
+    "Option order is non-authoritative; the confidence threshold cannot select a default."
+  ],
+  "matchedPolicies": [],
+  "appliedPolicies": [],
+  "restrictionsApplied": [],
+  "askUserQuestion": "Which option should be chosen: biome, prettier?",
+  "defaultIfNoAnswer": "defer or take the cheapest reversible step",
+  "learningEvent": {
+    "chosen": null,
+    "confidence": 0.56,
+    "kind": "decision-gate",
+    "shouldRecord": true,
+    "situation": "Choose formatter for the concurrent project"
+  }
+}
+recorded decision
+recorded decision
+recorded decision
+recorded decision
+{
+  "decisionId": "dec_1783681996190_2a007f1deb0f",
+  "outcome": "ask_user",
+  "recommendation": "No learned or executable policy selects among the current options.",
+  "selectedOption": null,
+  "rejectedOptions": [
+    "biome",
+    "prettier"
+  ],
+  "confidence": 0.56,
+  "candidateCollision": false,
+  "riskTier": "ask_before_action",
+  "reasoningSummary": [
+    "Applied deterministic policy precedence.",
+    "Option order is non-authoritative; the confidence threshold cannot select a default."
+  ],
+  "matchedPolicies": [],
+  "appliedPolicies": [],
+  "restrictionsApplied": [],
+  "askUserQuestion": "Which option should be chosen: biome, prettier?",
+  "defaultIfNoAnswer": "defer or take the cheapest reversible step",
+  "learningEvent": {
+    "chosen": null,
+    "confidence": 0.56,
+    "kind": "decision-gate",
+    "shouldRecord": true,
+    "situation": "Choose formatter for the concurrent project"
+  }
+}
+recorded decision
+{
+  "decisionId": "dec_1783681996203_80450eec5889",
+  "outcome": "ask_user",
+  "recommendation": "No learned or executable policy selects among the current options.",
+  "selectedOption": null,
+  "rejectedOptions": [
+    "biome",
+    "prettier"
+  ],
+  "confidence": 0.56,
+  "candidateCollision": false,
+  "riskTier": "ask_before_action",
+  "reasoningSummary": [
+    "Applied deterministic policy precedence.",
+    "Option order is non-authoritative; the confidence threshold cannot select a default."
+  ],
+  "matchedPolicies": [],
+  "appliedPolicies": [],
+  "restrictionsApplied": [],
+  "askUserQuestion": "Which option should be chosen: biome, prettier?",
+  "defaultIfNoAnswer": "defer or take the cheapest reversible step",
+  "learningEvent": {
+    "chosen": null,
+    "confidence": 0.56,
+    "kind": "decision-gate",
+    "shouldRecord": true,
+    "situation": "Choose formatter for the concurrent project"
+  }
+}
+recorded decision
+{
+  "decisionId": "dec_1783681996204_dcc7d06584d2",
+  "outcome": "ask_user",
+  "recommendation": "No learned or executable policy selects among the current options.",
+  "selectedOption": null,
+  "rejectedOptions": [
+    "biome",
+    "prettier"
+  ],
+  "confidence": 0.56,
+  "candidateCollision": false,
+  "riskTier": "ask_before_action",
+  "reasoningSummary": [
+    "Applied deterministic policy precedence.",
+    "Option order is non-authoritative; the confidence threshold cannot select a default."
+  ],
+  "matchedPolicies": [],
+  "appliedPolicies": [],
+  "restrictionsApplied": [],
+  "askUserQuestion": "Which option should be chosen: biome, prettier?",
+  "defaultIfNoAnswer": "defer or take the cheapest reversible step",
+  "learningEvent": {
+    "chosen": null,
+    "confidence": 0.56,
+    "kind": "decision-gate",
+    "shouldRecord": true,
+    "situation": "Choose formatter for the concurrent project"
+  }
+}
+{
+  "decisionId": "dec_1783681996207_e1e7a8999c0d",
+  "outcome": "ask_user",
+  "recommendation": "No learned or executable policy selects among the current options.",
+  "selectedOption": null,
+  "rejectedOptions": [
+    "biome",
+    "prettier"
+  ],
+  "confidence": 0.56,
+  "candidateCollision": false,
+  "riskTier": "ask_before_action",
+  "reasoningSummary": [
+    "Applied deterministic policy precedence.",
+    "Option order is non-authoritative; the confidence threshold cannot select a default."
+  ],
+  "matchedPolicies": [],
+  "appliedPolicies": [],
+  "restrictionsApplied": [],
+  "askUserQuestion": "Which option should be chosen: biome, prettier?",
+  "defaultIfNoAnswer": "defer or take the cheapest reversible step",
+  "learningEvent": {
+    "chosen": null,
+    "confidence": 0.56,
+    "kind": "decision-gate",
+    "shouldRecord": true,
+    "situation": "Choose formatter for the concurrent project"
+  }
+}
+{
+  "decisionId": "dec_1783681996208_c815dc27d0bc",
+  "outcome": "ask_user",
+  "recommendation": "No learned or executable policy selects among the current options.",
+  "selectedOption": null,
+  "rejectedOptions": [
+    "biome",
+    "prettier"
+  ],
+  "confidence": 0.56,
+  "candidateCollision": false,
+  "riskTier": "ask_before_action",
+  "reasoningSummary": [
+    "Applied deterministic policy precedence.",
+    "Option order is non-authoritative; the confidence threshold cannot select a default."
+  ],
+  "matchedPolicies": [],
+  "appliedPolicies": [],
+  "restrictionsApplied": [],
+  "askUserQuestion": "Which option should be chosen: biome, prettier?",
+  "defaultIfNoAnswer": "defer or take the cheapest reversible step",
+  "learningEvent": {
+    "chosen": null,
+    "confidence": 0.56,
+    "kind": "decision-gate",
+    "shouldRecord": true,
+    "situation": "Choose formatter for the concurrent project"
+  }
+}
+captured
+captured
+created high-strength update packet upd_1783681996247_360488724492
+captured
+captured
+created high-strength update packet upd_1783681996246_e926da0eae05
+created high-strength update packet upd_1783681996251_5cb2a5f641b4
+captured
+created high-strength update packet upd_1783681996264_3dc962a5cb06
+created high-strength update packet upd_1783681996268_e6f2f5b86dbc
+captured
+created high-strength update packet upd_1783681996268_e9e596002e22
+created high-strength update packet upd_1783681996272_40ff80292e5d
+created high-strength update packet upd_1783681996274_40e1b1ceeba2
+captured
+captured
+test codex_mcp_adapter_completes_the_learning_lifecycle ... ok
+applied 1 packet(s)
+test concurrent_update_processes_apply_a_packet_at_most_once ... ok
+test concurrent_processes_preserve_ledgers_ids_capture_and_feedback ... ok
+test codex_integration_doctor_verifies_the_learning_contract ... ok
+test codex_integration_doctor_rejects_invalid_toml_configuration ... ok
+test eval_exits_nonzero_when_an_expected_result_is_wrong ... ok
+test gate_blocks_secret_in_risk_without_persisting_it ... ok
+test legacy_decision_commands_record_project_narrow_defaults ... ok
+test bench_scale_cli_reports_envelope_fields ... ok
+test skill_command_prints_dynamic_build_decision_engine_skill ... ok
+test onboarding_answer_file_changes_a_scoped_decision ... ok
+test interactive_onboarding_completes_on_a_clean_vault ... ok
+test onboarding_rejects_secrets_in_pending_metadata ... ok
+test export_restore_preserves_learned_corrected_and_policy_decisions ... ok
+test structured_feedback_incidents_drive_prompt_free_shadow_metrics ... ok
+test production_smoke_cli_flow ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.43s
+

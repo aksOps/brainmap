@@ -1,0 +1,19 @@
+$ rtk proxy npm pack --dry-run ./npm/brainmap
+npm notice
+npm notice 📦  @aksops/brainmap@0.1.0
+npm notice Tarball Contents
+npm notice 277B README.md
+npm notice 41.3MB bin/brainmap
+npm notice 6.5MB bin/brainmapd
+npm notice 690B package.json
+npm notice Tarball Details
+npm notice name: @aksops/brainmap
+npm notice version: 0.1.0
+npm notice filename: aksops-brainmap-0.1.0.tgz
+npm notice package size: 35.9 MB
+npm notice unpacked size: 47.8 MB
+npm notice shasum: 4087f7faef79fa5c36684ec037f40391abb16e2b
+npm notice integrity: sha512-mYX/hBkQ2puXK[...]/k9Ig4SQMlwwQ==
+npm notice total files: 4
+npm notice
+aksops-brainmap-0.1.0.tgz

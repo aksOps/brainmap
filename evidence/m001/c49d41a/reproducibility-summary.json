@@ -1,0 +1,33 @@
+{
+  "passed": true,
+  "log": "reproducibility.log",
+  "logSha256": "8f444d82447d590db3a20ad8e5bad67acadbaa05f585d42074d39385d4559024",
+  "retainedWorkBeforeCompaction": "repro-work/brainmap-repro.ATXJiJ",
+  "sourceArchive": {
+    "path": "source.tar",
+    "sha256": "e19133c4aa31b7418a298f41727f32f0cdfed5279dbe28fca798e0fc7c88f76f",
+    "sizeBytes": 1771520
+  },
+  "binaries": {
+    "brainmap": {
+      "aSha256": "cfda4b4eb5ecb4385632b1f3c7e13402b4870399ad1bf58db1632445d4d16563",
+      "bSha256": "cfda4b4eb5ecb4385632b1f3c7e13402b4870399ad1bf58db1632445d4d16563",
+      "installedSha256": "cfda4b4eb5ecb4385632b1f3c7e13402b4870399ad1bf58db1632445d4d16563",
+      "npmSha256": "cfda4b4eb5ecb4385632b1f3c7e13402b4870399ad1bf58db1632445d4d16563",
+      "sizeBytes": 41284048,
+      "aEqualsB": true,
+      "aEqualsInstalled": true,
+      "installedEqualsNpm": true
+    },
+    "brainmapd": {
+      "aSha256": "72119cea3e554648f88dfb51049dda068c6ab144ffc7f46d1772073187f67c05",
+      "bSha256": "72119cea3e554648f88dfb51049dda068c6ab144ffc7f46d1772073187f67c05",
+      "installedSha256": "72119cea3e554648f88dfb51049dda068c6ab144ffc7f46d1772073187f67c05",
+      "npmSha256": "72119cea3e554648f88dfb51049dda068c6ab144ffc7f46d1772073187f67c05",
+      "sizeBytes": 6526344,
+      "aEqualsB": true,
+      "aEqualsInstalled": true,
+      "installedEqualsNpm": true
+    }
+  }
+}

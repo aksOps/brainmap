@@ -1,0 +1,1 @@
+$ rtk proxy shellcheck scripts/generate-sbom.sh scripts/test-vendored-i18n.sh scripts/verify-release-reproducibility.sh
