@@ -83,6 +83,12 @@ pub fn run(args: EvalArgs) -> Result<()> {
     let mut expected_asks = 0usize;
     let mut ids = Vec::new();
     let mut reasons = Vec::new();
+    let mut exact_expected = 0usize;
+    let mut exact_correct = 0usize;
+    let mut paraphrase_expected = 0usize;
+    let mut paraphrase_correct = 0usize;
+    let mut negative_expected = 0usize;
+    let mut negative_correct = 0usize;
     for case in &cases {
         let case_vault = case
             .setup
@@ -139,6 +145,23 @@ pub fn run(args: EvalArgs) -> Result<()> {
             if applied != expected {
                 wrong_rule += 1;
             }
+            if expected {
+                let exact = case.setup.as_ref().is_some_and(|setup| {
+                    setup.learned_decisions.iter().any(|rule| {
+                        rule.situation.as_deref().unwrap_or(&case.situation) == case.situation
+                    })
+                });
+                if exact {
+                    exact_expected += 1;
+                    exact_correct += usize::from(applied);
+                } else {
+                    paraphrase_expected += 1;
+                    paraphrase_correct += usize::from(applied);
+                }
+            } else {
+                negative_expected += 1;
+                negative_correct += usize::from(!applied);
+            }
         }
     }
     println!(
@@ -150,6 +173,17 @@ pub fn run(args: EvalArgs) -> Result<()> {
             "falseBlock": false_block,
             "wrongChoice": wrong_choice,
             "wrongRule": wrong_rule,
+            "learnedRuleRecall": {
+                "exact": ratio(exact_correct, exact_expected),
+                "exactCorrect": exact_correct,
+                "exactExpected": exact_expected,
+                "supportedParaphrase": ratio(paraphrase_correct, paraphrase_expected),
+                "paraphraseCorrect": paraphrase_correct,
+                "paraphraseExpected": paraphrase_expected,
+                "negativeSpecificity": ratio(negative_correct, negative_expected),
+                "negativeCorrect": negative_correct,
+                "negativeExpected": negative_expected
+            },
             "confidenceCalibration": "match-derived-target",
             "policyCoverage": "seed-policy",
             "ambiguityDetection": true,
@@ -159,6 +193,14 @@ pub fn run(args: EvalArgs) -> Result<()> {
         }))?
     );
     Ok(())
+}
+
+fn ratio(correct: usize, expected: usize) -> f64 {
+    if expected == 0 {
+        1.0
+    } else {
+        correct as f64 / expected as f64
+    }
 }
 
 fn prepare_case_vault(case: &Case, setup: &CaseSetup) -> Result<(tempfile::TempDir, PathBuf)> {

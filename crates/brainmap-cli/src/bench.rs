@@ -9,6 +9,8 @@ use std::time::Instant;
 
 const SCALE_DIR: &str = "90-calibration/scale-bench";
 const MAX_SCALE: usize = 25_000;
+const GATE_WARMUP_ITERATIONS: usize = 10;
+const GATE_SAMPLE_ITERATIONS: usize = 200;
 
 pub fn run(args: BenchArgs) -> Result<()> {
     let root = vault::resolve_vault(args.vault);
@@ -23,27 +25,35 @@ pub fn run(args: BenchArgs) -> Result<()> {
         None
     };
     let notes = indexed_note_count(&root)?;
-    let gate_start = Instant::now();
-    let _ = gate::evaluate(
-        &root,
-        gate::GateInput {
-            intent: "would-ask-user".into(),
-            situation: "Choose v1 storage".into(),
-            options: vec![
-                "Markdown+JSONL".into(),
-                "SQLite".into(),
-                "External Vector DB".into(),
-            ],
-            proposed_action: String::new(),
-            risk: "low".into(),
-            reversible: Some(true),
-            decision_type: "architecture".into(),
-            scope: "global".into(),
-            agent_confidence: None,
-            dry_run: true,
-        },
-    )?;
-    let gate_ms = gate_start.elapsed().as_millis();
+    let gate_request = || gate::GateInput {
+        intent: "would-ask-user".into(),
+        situation: "Choose v1 storage".into(),
+        options: vec![
+            "Markdown+JSONL".into(),
+            "SQLite".into(),
+            "External Vector DB".into(),
+        ],
+        proposed_action: String::new(),
+        risk: "low".into(),
+        reversible: Some(true),
+        decision_type: "architecture".into(),
+        scope: "global".into(),
+        agent_confidence: None,
+        dry_run: true,
+    };
+    for _ in 0..GATE_WARMUP_ITERATIONS {
+        let _ = gate::evaluate(&root, gate_request())?;
+    }
+    let mut gate_samples_us = Vec::with_capacity(GATE_SAMPLE_ITERATIONS);
+    for _ in 0..GATE_SAMPLE_ITERATIONS {
+        let gate_start = Instant::now();
+        let _ = gate::evaluate(&root, gate_request())?;
+        gate_samples_us.push(gate_start.elapsed().as_micros());
+    }
+    gate_samples_us.sort_unstable();
+    let gate_p50_ms = percentile_ms(&gate_samples_us, 50);
+    let gate_p95_ms = percentile_ms(&gate_samples_us, 95);
+    let gate_max_ms = gate_samples_us.last().copied().unwrap_or_default() as f64 / 1_000.0;
     let cap_start = Instant::now();
     learning::capture_text(
         &root,
@@ -84,7 +94,11 @@ pub fn run(args: BenchArgs) -> Result<()> {
             "generatedUnder": args.scale.map(|_| SCALE_DIR),
             "notes": notes,
             "indexRebuildMs": rebuild_ms,
-            "gateMs": gate_ms,
+            "gateMs": gate_p95_ms,
+            "gateIterations": GATE_SAMPLE_ITERATIONS,
+            "gateP50Ms": gate_p50_ms,
+            "gateP95Ms": gate_p95_ms,
+            "gateMaxMs": gate_max_ms,
             "contextFastMs": context_ms,
             "captureMs": capture_ms,
             "ftsMs": fts_ms,
@@ -93,6 +107,18 @@ pub fn run(args: BenchArgs) -> Result<()> {
             "embeddings": vector,
             "daemonGateMs": null,
             "memoryMb": null,
+            "candidateBounds": {
+                "queryTerms": index::MAX_DECISION_QUERY_TERMS,
+                "rowsPerTerm": index::MAX_DECISION_ROWS_PER_TERM,
+                "maximumFuzzyRows": index::MAX_DECISION_FUZZY_ROWS
+            },
+            "host": {
+                "os": std::env::consts::OS,
+                "architecture": std::env::consts::ARCH,
+                "logicalCpus": std::thread::available_parallelism().map(usize::from).unwrap_or(1),
+                "optimized": !cfg!(debug_assertions),
+                "brainmapVersion": env!("CARGO_PKG_VERSION")
+            },
             "hotPath": {
                 "llm": false,
                 "agentMemory": false,
@@ -103,6 +129,14 @@ pub fn run(args: BenchArgs) -> Result<()> {
         }))?
     );
     Ok(())
+}
+
+fn percentile_ms(samples_us: &[u128], percentile: usize) -> f64 {
+    if samples_us.is_empty() {
+        return 0.0;
+    }
+    let index = ((samples_us.len() * percentile).div_ceil(100)).saturating_sub(1);
+    samples_us[index.min(samples_us.len() - 1)] as f64 / 1_000.0
 }
 
 fn timed(work: impl FnOnce() -> Result<()>) -> Result<u128> {

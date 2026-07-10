@@ -10,13 +10,14 @@ It is not a knowledge base, transcript archive, vector-RAG chatbot, or remote me
 cargo run -- brainmap init --dry-run
 cargo run -- brainmap init-vault --vault ./tmp/BrainMap --yes
 cargo run -- brainmap index rebuild --vault ./tmp/BrainMap
+cargo run -- brainmap onboard --vault ./tmp/BrainMap
 cargo run -- brainmap gate --intent would-ask-user --situation "Choose v1 storage" --options "Markdown+JSONL|SQLite|External Vector DB" --risk low --reversible true --vault ./tmp/BrainMap --json
 cargo run -- brainmap context --fast --json --vault ./tmp/BrainMap
 ```
 
 Markdown is canonical. SQLite is a rebuildable compiled index. The hot path never calls an LLM, AgentMemory, network, or embedding generator.
 
-Only validated deterministic rule markers are executable; ordinary policy prose remains context. See `docs/executable-policies.md`.
+Only validated deterministic rule markers are executable; ordinary policy prose remains context. See `docs/executable-policies.md` and `docs/onboarding.md`.
 
 ## Install
 

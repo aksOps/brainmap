@@ -1,11 +1,15 @@
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
+use fs4::FileExt;
 use sha2::{Digest, Sha256};
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub fn now_iso() -> String {
     let now: DateTime<Utc> = Utc::now();
@@ -17,14 +21,17 @@ pub fn today() -> String {
 }
 
 pub fn id(prefix: &str, seed: &str) -> String {
-    let millis = SystemTime::now()
+    let elapsed = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
+        .unwrap_or_default();
+    let millis = elapsed.as_millis();
+    let sequence = ID_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let mut h = Sha256::new();
     h.update(seed.as_bytes());
-    h.update(millis.to_string().as_bytes());
-    format!("{prefix}_{millis}_{}", &hex::encode(h.finalize())[..8])
+    h.update(elapsed.as_nanos().to_le_bytes());
+    h.update(std::process::id().to_le_bytes());
+    h.update(sequence.to_le_bytes());
+    format!("{prefix}_{millis}_{}", &hex::encode(h.finalize())[..12])
 }
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -69,54 +76,75 @@ pub fn ensure_parent(path: &Path) -> Result<()> {
 
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     ensure_parent(path)?;
-    let tmp = path.with_extension(format!(
-        "{}.tmp",
-        path.extension().and_then(|s| s.to_str()).unwrap_or("file")
-    ));
-    {
-        let mut f = File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?;
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("brainmap-file");
+    let tmp = parent.join(format!(".{file_name}.{}.tmp", id("write", file_name)));
+    let result = (|| -> Result<()> {
+        let mut f = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+            .with_context(|| format!("create {}", tmp.display()))?;
         f.write_all(bytes)?;
         f.sync_all()?;
+        fs::rename(&tmp, path)
+            .with_context(|| format!("rename {} to {}", tmp.display(), path.display()))?;
+        #[cfg(unix)]
+        File::open(parent)?.sync_all()?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
     }
-    fs::rename(&tmp, path)
-        .with_context(|| format!("rename {} to {}", tmp.display(), path.display()))?;
-    Ok(())
+    result
 }
 
 pub fn append_jsonl(path: &Path, value: &serde_json::Value) -> Result<()> {
     ensure_parent(path)?;
+    let mut bytes = serde_json::to_vec(value)?;
+    bytes.push(b'\n');
     let mut file = OpenOptions::new()
         .create(true)
+        .read(true)
         .append(true)
         .open(path)
         .with_context(|| format!("append {}", path.display()))?;
-    serde_json::to_writer(&mut file, value)?;
-    file.write_all(b"\n")?;
+    FileExt::lock(&file).with_context(|| format!("lock {}", path.display()))?;
+    file.write_all(&bytes)?;
     file.sync_data()?;
+    FileExt::unlock(&file).with_context(|| format!("unlock {}", path.display()))?;
     Ok(())
 }
 
 pub struct FileLock {
-    path: PathBuf,
+    file: File,
 }
 
 impl FileLock {
     pub fn acquire(dir: &Path, name: &str) -> Result<Self> {
         fs::create_dir_all(dir)?;
         let path = dir.join(name);
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(mut file) => {
-                writeln!(file, "pid={}", std::process::id())?;
-                Ok(Self { path })
-            }
-            Err(err) => bail!("lock already held at {}: {err}", path.display()),
-        }
+        let mut file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&path)?;
+        FileExt::try_lock(&file)
+            .map_err(|error| anyhow::anyhow!("lock already held at {}: {error}", path.display()))?;
+        file.set_len(0)?;
+        writeln!(file, "pid={}", std::process::id())?;
+        file.sync_data()?;
+        Ok(Self { file })
     }
 }
 
 impl Drop for FileLock {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
+        let _ = FileExt::unlock(&self.file);
     }
 }
 
@@ -259,5 +287,89 @@ mod tests {
         );
         assert!(portable_archive_collision_key("notes/CON.md").is_err());
         assert!(portable_archive_collision_key("notes/policy. ").is_err());
+    }
+
+    #[test]
+    fn concurrent_identical_requests_receive_unique_ids() {
+        let ids = std::thread::scope(|scope| {
+            let handles = (0..16)
+                .map(|_| {
+                    scope.spawn(|| {
+                        (0..100)
+                            .map(|_| id("dec", "identical request"))
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect::<Vec<_>>();
+            handles
+                .into_iter()
+                .flat_map(|handle| handle.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        let unique = ids.iter().collect::<std::collections::HashSet<_>>();
+        assert_eq!(unique.len(), ids.len());
+    }
+
+    #[test]
+    fn concurrent_atomic_writes_never_share_temporary_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("policy.md");
+        let candidates = (0..16)
+            .map(|index| format!("complete policy body {index}\n"))
+            .collect::<Vec<_>>();
+        std::thread::scope(|scope| {
+            let handles = candidates
+                .iter()
+                .map(|body| scope.spawn(|| write_atomic(&path, body.as_bytes())))
+                .collect::<Vec<_>>();
+            for handle in handles {
+                handle.join().unwrap().unwrap();
+            }
+        });
+
+        let final_body = fs::read_to_string(&path).unwrap();
+        assert!(candidates.contains(&final_body));
+        assert_eq!(fs::read_dir(tmp.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn concurrent_jsonl_appends_remain_complete() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("ledger.jsonl");
+        std::thread::scope(|scope| {
+            let handles = (0..16)
+                .map(|worker| {
+                    let path = &path;
+                    scope.spawn(move || {
+                        for event in 0..100 {
+                            append_jsonl(
+                                path,
+                                &serde_json::json!({"worker": worker, "event": event}),
+                            )
+                            .unwrap();
+                        }
+                    })
+                })
+                .collect::<Vec<_>>();
+            for handle in handles {
+                handle.join().unwrap();
+            }
+        });
+        let text = fs::read_to_string(path).unwrap();
+        let events = text
+            .lines()
+            .map(serde_json::from_str::<serde_json::Value>)
+            .collect::<serde_json::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(events.len(), 1_600);
+    }
+
+    #[test]
+    fn file_lock_recovers_after_the_owner_drops() {
+        let tmp = tempfile::tempdir().unwrap();
+        let first = FileLock::acquire(tmp.path(), "operation.lock").unwrap();
+        assert!(FileLock::acquire(tmp.path(), "operation.lock").is_err());
+        drop(first);
+        FileLock::acquire(tmp.path(), "operation.lock").unwrap();
     }
 }

@@ -21,6 +21,10 @@ pub struct DecisionResult {
     pub match_score: Option<f64>,
     #[serde(rename = "matchKind", skip_serializing_if = "Option::is_none")]
     pub match_kind: Option<String>,
+    #[serde(rename = "matchMargin", skip_serializing_if = "Option::is_none")]
+    pub match_margin: Option<f64>,
+    #[serde(rename = "candidateCollision")]
+    pub candidate_collision: bool,
     #[serde(rename = "riskTier")]
     pub risk_tier: String,
     #[serde(rename = "reasoningSummary")]
@@ -77,6 +81,6 @@ impl<'a> DecisionEngine<'a> {
     }
 
     pub fn evaluate(&self, request: DecisionRequest) -> Result<DecisionResult> {
-        crate::gate::evaluate_internal(self.root, request)
+        crate::decision_engine_impl::evaluate_internal(self.root, request)
     }
 }

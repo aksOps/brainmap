@@ -25,6 +25,7 @@ pub struct HookArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct GateRequest {
     intent: Option<String>,
     situation: Option<String>,
@@ -49,21 +50,7 @@ pub fn stdio(args: StdioArgs) -> Result<()> {
             continue;
         }
         let request: GateRequest = serde_json::from_str(&line)?;
-        let response = gate::evaluate(
-            &root,
-            gate::GateInput {
-                intent: request.intent.unwrap_or_else(|| "would-ask-user".into()),
-                situation: request.situation.unwrap_or_default(),
-                options: parse_options(request.options),
-                proposed_action: request.proposed_action.unwrap_or_default(),
-                risk: request.risk.unwrap_or_else(|| "medium".into()),
-                reversible: request.reversible,
-                decision_type: request.decision_type.unwrap_or_else(|| "general".into()),
-                scope: request.scope.unwrap_or_else(|| "global".into()),
-                agent_confidence: request.agent_confidence,
-                dry_run: false,
-            },
-        )?;
+        let response = gate::evaluate(&root, stdio_gate_input(request))?;
         if response.outcome == "block" {
             blocked = true;
         }
@@ -73,6 +60,21 @@ pub fn stdio(args: StdioArgs) -> Result<()> {
         std::process::exit(2);
     }
     Ok(())
+}
+
+fn stdio_gate_input(request: GateRequest) -> gate::GateInput {
+    gate::GateInput {
+        intent: request.intent.unwrap_or_else(|| "would-ask-user".into()),
+        situation: request.situation.unwrap_or_default(),
+        options: parse_options(request.options),
+        proposed_action: request.proposed_action.unwrap_or_default(),
+        risk: request.risk.unwrap_or_else(|| "medium".into()),
+        reversible: request.reversible,
+        decision_type: request.decision_type.unwrap_or_else(|| "general".into()),
+        scope: request.scope.unwrap_or_else(|| "global".into()),
+        agent_confidence: request.agent_confidence,
+        dry_run: false,
+    }
 }
 
 pub fn hook(args: HookArgs) -> Result<()> {
@@ -247,6 +249,34 @@ mod tests {
     }
 
     #[test]
+    fn golden_generic_stdio_payload_maps_every_contract_field() {
+        let request: GateRequest = serde_json::from_value(serde_json::json!({
+            "intent": "would-ask-user",
+            "situation": "Choose formatter",
+            "options": ["biome", "prettier"],
+            "proposedAction": "write biome.json",
+            "risk": "low",
+            "reversible": true,
+            "decisionType": "tooling",
+            "scope": "project:alpha",
+            "agentConfidence": 0.75
+        }))
+        .unwrap();
+        let input = stdio_gate_input(request);
+
+        assert_eq!(input.intent, "would-ask-user");
+        assert_eq!(input.situation, "Choose formatter");
+        assert_eq!(input.options, ["biome", "prettier"]);
+        assert_eq!(input.proposed_action, "write biome.json");
+        assert_eq!(input.risk, "low");
+        assert_eq!(input.reversible, Some(true));
+        assert_eq!(input.decision_type, "tooling");
+        assert_eq!(input.scope, "project:alpha");
+        assert_eq!(input.agent_confidence, Some(0.75));
+        assert!(!input.dry_run);
+    }
+
+    #[test]
     fn hook_marks_destructive_tool_use_irreversible() {
         let input = hook_gate_input(
             "codex",
@@ -256,6 +286,70 @@ mod tests {
         assert_eq!(input.risk, "high");
         assert_eq!(input.reversible, Some(false));
         assert!(input.situation.contains("irreversible-risk=true"));
+    }
+
+    #[test]
+    fn golden_codex_and_claude_hook_payloads_map_to_the_safety_contract() {
+        let codex = hook_gate_input(
+            "codex",
+            "PreToolUse",
+            r#"{"toolName":"Write","toolInput":{"path":"src/lib.rs"}}"#,
+        );
+        assert_eq!(codex.intent, "agent-hook:PreToolUse");
+        assert_eq!(codex.decision_type, "agent-harness");
+        assert!(codex.situation.contains("tool Write"));
+        assert!(codex.proposed_action.contains("src/lib.rs"));
+        assert_eq!(codex.reversible, Some(true));
+
+        let claude = hook_gate_input(
+            "claude-code",
+            "PreToolUse",
+            r#"{"tool_name":"Bash","tool_input":{"command":"rm -rf target"}}"#,
+        );
+        assert!(claude.situation.contains("tool Bash"));
+        assert!(claude.situation.contains("irreversible-risk=true"));
+        assert_eq!(claude.risk, "high");
+        assert_eq!(claude.reversible, Some(false));
+
+        let prompt = hook_gate_input(
+            "codex",
+            "UserPromptSubmit",
+            r#"{"prompt":"Should I use npm or pnpm?"}"#,
+        );
+        assert!(prompt.proposed_action.contains("npm or pnpm"));
+        assert_eq!(prompt.intent, "agent-hook:UserPromptSubmit");
+    }
+
+    #[test]
+    fn pre_tool_hook_allows_routine_actions_and_stops_destructive_actions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        crate::vault::init_vault(Some(root.clone()), false, true).unwrap();
+        crate::index::rebuild(&root).unwrap();
+
+        let routine = gate::evaluate(
+            &root,
+            hook_gate_input(
+                "codex",
+                "PreToolUse",
+                r#"{"tool_name":"Write","tool_input":{"path":"src/lib.rs"}}"#,
+            ),
+        )
+        .unwrap();
+        assert_eq!(routine.outcome, "proceed");
+        assert_eq!(routine.selected_option.as_deref(), Some("proceed"));
+
+        let destructive = gate::evaluate(
+            &root,
+            hook_gate_input(
+                "claude-code",
+                "PreToolUse",
+                r#"{"tool_name":"Bash","tool_input":{"command":"rm -rf target"}}"#,
+            ),
+        )
+        .unwrap();
+        assert!(matches!(destructive.outcome.as_str(), "ask_user" | "block"));
+        assert!(hook_should_block("PreToolUse", &destructive.outcome));
     }
 
     #[test]
@@ -279,6 +373,8 @@ mod tests {
             rule_scope: None,
             match_score: None,
             match_kind: None,
+            match_margin: None,
+            candidate_collision: false,
             risk_tier: "ask_before_action".into(),
             reasoning_summary: vec![],
             matched_policies: vec![],

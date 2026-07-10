@@ -1,20 +1,25 @@
 use crate::{index, markdown::Note, util, vault};
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use std::fs;
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{IpAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 const WEB_HTML: &str = include_str!("../assets/web.html");
+const MAX_REQUEST_HEADER_BYTES: usize = 8 * 1024;
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub fn serve(vault: Option<PathBuf>, host: &str, port: u16, _open: bool) -> Result<()> {
+    validate_loopback_host(host)?;
     let root = vault::resolve_vault(vault);
     let listener = TcpListener::bind((host, port))?;
     println!("Brainmap web UI: http://{host}:{port}");
     println!("read-only vault: {}", root.display());
     for stream in listener.incoming() {
         let stream = stream?;
+        configure_stream(&stream)?;
         handle(stream, &root)?;
     }
     Ok(())
@@ -30,9 +35,14 @@ pub fn export_static(vault: Option<PathBuf>, out: PathBuf) -> Result<()> {
 }
 
 fn handle(mut stream: TcpStream, root: &Path) -> Result<()> {
-    let mut buf = [0u8; 8192];
-    let n = stream.read(&mut buf)?;
-    let req = String::from_utf8_lossy(&buf[..n]);
+    let request = match read_request(&mut stream)? {
+        RequestRead::Complete(request) => request,
+        RequestRead::TooLarge => {
+            respond(&mut stream, 413, "text/plain", "request headers too large")?;
+            return Ok(());
+        }
+    };
+    let req = String::from_utf8_lossy(&request);
     let first = req.lines().next().unwrap_or_default();
     let parts = first.split_whitespace().collect::<Vec<_>>();
     if parts.len() < 2 {
@@ -104,11 +114,12 @@ fn respond(stream: &mut TcpStream, status: u16, content_type: &str, body: &str) 
         400 => "Bad Request",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        413 => "Content Too Large",
         _ => "OK",
     };
     write!(
         stream,
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-store\r\n\r\n{}",
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'\r\nX-Content-Type-Options: nosniff\r\n\r\n{}",
         body.len(),
         body
     )?;
@@ -135,7 +146,11 @@ fn ui_payload(root: &Path) -> Result<Value> {
         notes: 0,
         message: "index unavailable".into(),
     });
-    let notes = vault::load_notes(root).unwrap_or_default();
+    let notes = vault::load_notes(root)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|note| !note.sensitivity.eq_ignore_ascii_case("secret"))
+        .collect::<Vec<_>>();
     let decisions = decision_rows(root, 24);
     let autopilot = autopilot(root);
     let policy_count = count_notes(&notes, is_policy);
@@ -468,4 +483,95 @@ fn percent_decode(input: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).into()
+}
+
+fn validate_loopback_host(host: &str) -> Result<()> {
+    if host.eq_ignore_ascii_case("localhost") {
+        return Ok(());
+    }
+    let address: IpAddr = host
+        .parse()
+        .with_context(|| "web host must be localhost or a numeric loopback address")?;
+    if !address.is_loopback() {
+        bail!("remote web binding is disabled; use localhost, 127.0.0.1, or ::1");
+    }
+    Ok(())
+}
+
+fn configure_stream(stream: &TcpStream) -> Result<()> {
+    stream.set_read_timeout(Some(REQUEST_TIMEOUT))?;
+    stream.set_write_timeout(Some(REQUEST_TIMEOUT))?;
+    Ok(())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum RequestRead {
+    Complete(Vec<u8>),
+    TooLarge,
+}
+
+fn read_request(reader: &mut impl Read) -> std::io::Result<RequestRead> {
+    let mut request = Vec::new();
+    let mut chunk = [0u8; 1024];
+    loop {
+        let read = reader.read(&mut chunk)?;
+        if read == 0 {
+            return Ok(RequestRead::Complete(request));
+        }
+        request.extend_from_slice(&chunk[..read]);
+        if request.len() > MAX_REQUEST_HEADER_BYTES {
+            return Ok(RequestRead::TooLarge);
+        }
+        if request.windows(4).any(|window| window == b"\r\n\r\n") {
+            return Ok(RequestRead::Complete(request));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn web_host_must_be_loopback() {
+        for host in ["localhost", "127.0.0.1", "127.42.1.9", "::1"] {
+            validate_loopback_host(host).unwrap();
+        }
+        for host in ["0.0.0.0", "192.168.1.10", "::", "example.test"] {
+            assert!(validate_loopback_host(host).is_err(), "accepted {host}");
+        }
+    }
+
+    #[test]
+    fn request_reader_enforces_the_header_limit() {
+        let oversized = vec![b'x'; MAX_REQUEST_HEADER_BYTES + 1];
+        assert_eq!(
+            read_request(&mut Cursor::new(oversized)).unwrap(),
+            RequestRead::TooLarge
+        );
+    }
+
+    #[test]
+    fn ui_payload_excludes_secret_notes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+        fs::write(
+            root.join("40-restrictions/secret-web-note.md"),
+            "---\nid: secret-web-note\ntype: restriction\nstatus: active\nconfidence: high\nrisk_tier: hard_no\nsensitivity: secret\n---\n# Secret web needle\nsecret-web-needle\n",
+        )
+        .unwrap();
+        index::rebuild(&root).unwrap();
+
+        let payload = ui_json(&root).unwrap();
+        assert!(!payload.contains("secret-web-needle"));
+        assert!(!payload.contains("Secret web needle"));
+        assert!(
+            route(&root, "/api/search?q=secret-web-needle")
+                .unwrap()
+                .2
+                .contains("[]")
+        );
+    }
 }

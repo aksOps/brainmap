@@ -2,6 +2,7 @@ mod bench;
 mod cli;
 mod context;
 pub mod decision_engine;
+mod decision_engine_impl;
 mod eval;
 mod export;
 mod gate;

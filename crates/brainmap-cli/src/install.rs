@@ -1,4 +1,4 @@
-use crate::{skill, util};
+use crate::{gate, index, skill, util, vault};
 use anyhow::{Context, Result, bail};
 use clap::Args;
 use serde_json::{Value, json};
@@ -34,6 +34,129 @@ pub fn install_harness(args: InstallHarnessArgs) -> Result<()> {
         } else {
             item.install()?;
         }
+    }
+    Ok(())
+}
+
+pub fn integration_doctor(args: crate::cli::IntegrationDoctorArgs) -> Result<()> {
+    let supported = matches!(
+        args.target.as_str(),
+        "codex" | "claude-code" | "opencode" | "copilot" | "generic-stdio"
+    );
+    let install_args = InstallHarnessArgs {
+        target: args.target.clone(),
+        global: false,
+        project: args.project.clone(),
+        dry_run: true,
+        uninstall: false,
+    };
+    let planned = plan(&install_args);
+    let installed = supported && planned.iter().all(|item| item.path.exists());
+    let configuration_valid = planned.iter().all(|item| {
+        if !item.path.exists()
+            || item.path.extension().and_then(|value| value.to_str()) != Some("json")
+        {
+            return true;
+        }
+        fs::read(&item.path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .is_some()
+    });
+    let contract = planned
+        .iter()
+        .filter_map(|item| fs::read_to_string(&item.path).ok())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let recording_supported = contract.contains("record-decision");
+    let feedback_supported = contract.contains("learn-feedback");
+    let activation_requires_approval = contract.contains("apply --pending --yes");
+    let executable = std::env::current_exe().is_ok_and(|path| path.exists());
+    let root = vault::resolve_vault(args.vault);
+    let vault_exists = root.exists();
+    let index_status = index::status(&root).ok();
+    let index_valid = index_status.as_ref().is_some_and(|status| status.valid);
+    let gate_reachable = index_valid
+        && gate::evaluate(
+            &root,
+            gate::GateInput {
+                intent: "integration-doctor".into(),
+                situation: "Choose v1 storage".into(),
+                options: vec!["Markdown+JSONL".into(), "External Vector DB".into()],
+                proposed_action: String::new(),
+                risk: "low".into(),
+                reversible: Some(true),
+                decision_type: "architecture".into(),
+                scope: "global".into(),
+                agent_confidence: None,
+                dry_run: true,
+            },
+        )
+        .is_ok();
+    let enforcement = planned
+        .iter()
+        .map(|item| item.enforcement)
+        .collect::<Vec<_>>();
+    let healthy = supported
+        && installed
+        && configuration_valid
+        && executable
+        && vault_exists
+        && index_valid
+        && gate_reachable
+        && recording_supported
+        && feedback_supported
+        && activation_requires_approval;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "target": args.target,
+            "supported": supported,
+            "installed": installed,
+            "configurationValid": configuration_valid,
+            "executableAvailable": executable,
+            "vaultExists": vault_exists,
+            "indexValid": index_valid,
+            "gateReachable": gate_reachable,
+            "recordingSupported": recording_supported,
+            "feedbackSupported": feedback_supported,
+            "activationRequiresApproval": activation_requires_approval,
+            "enforcement": enforcement,
+            "healthy": healthy,
+        }))?
+    );
+    if !healthy {
+        let mut issues = Vec::new();
+        if !supported {
+            issues.push("unsupported target");
+        }
+        if !installed {
+            issues.push("adapter files missing");
+        }
+        if !configuration_valid {
+            issues.push("invalid host configuration");
+        }
+        if !executable {
+            issues.push("brainmap executable unavailable");
+        }
+        if !vault_exists {
+            issues.push("vault missing");
+        } else if !index_valid {
+            issues.push("compiled index missing or invalid");
+        }
+        if !gate_reachable {
+            issues.push("decision gate unhealthy");
+        }
+        if !recording_supported {
+            issues.push("recording contract missing");
+        }
+        if !feedback_supported {
+            issues.push("feedback contract missing");
+        }
+        if !activation_requires_approval {
+            issues.push("explicit activation approval missing");
+        }
+        bail!("integration doctor unhealthy: {}", issues.join(", "));
     }
     Ok(())
 }
@@ -172,29 +295,29 @@ fn plan(args: &InstallHarnessArgs) -> Vec<PlanItem> {
         "claude-code" => vec![
             PlanItem {
                 path: base.join(".claude/skills/build-decision-engine/SKILL.md"),
-                enforcement: "instruction+skill",
+                enforcement: "instruction-only",
                 action: PlanAction::OwnedText(skill::build_decision_engine_shim("claude-code")),
             },
             PlanItem {
                 path: base.join(".claude/settings.json"),
-                enforcement: "hooked",
+                enforcement: "enforced",
                 action: PlanAction::JsonHooks(hook_bindings("claude-code")),
             },
         ],
         "codex" => vec![
             PlanItem {
                 path: base.join(".codex/skills/build-decision-engine/SKILL.md"),
-                enforcement: "instruction+skill",
+                enforcement: "instruction-only",
                 action: PlanAction::OwnedText(skill::build_decision_engine_shim("codex")),
             },
             PlanItem {
                 path: base.join("AGENTS.md"),
-                enforcement: "instruction fallback",
+                enforcement: "instruction-only",
                 action: PlanAction::ManagedText(managed_block("codex")),
             },
             PlanItem {
                 path: base.join(".codex/hooks.json"),
-                enforcement: "hooked",
+                enforcement: "enforced",
                 action: PlanAction::JsonHooks(hook_bindings("codex")),
             },
         ],
@@ -510,7 +633,7 @@ mod tests {
         assert!(plan.iter().any(|item| {
             item.path
                 .ends_with(".codex/skills/build-decision-engine/SKILL.md")
-                && item.enforcement == "instruction+skill"
+                && item.enforcement == "instruction-only"
         }));
     }
 

@@ -70,6 +70,7 @@ enum Command {
     Harness(HarnessArgs),
     Skill(SkillArgs),
     Install(InstallArgs),
+    Integration(IntegrationArgs),
     Snapshot(SnapshotArgs),
     Rollback(RollbackArgs),
     Bench(BenchArgs),
@@ -122,6 +123,27 @@ pub struct OnboardArgs {
     pub dry_run: bool,
     #[arg(long)]
     pub yes: bool,
+}
+
+#[derive(Args)]
+pub struct IntegrationArgs {
+    #[command(subcommand)]
+    command: IntegrationCommand,
+}
+
+#[derive(Subcommand)]
+enum IntegrationCommand {
+    Doctor(IntegrationDoctorArgs),
+}
+
+#[derive(Args)]
+pub struct IntegrationDoctorArgs {
+    #[arg(long)]
+    pub target: String,
+    #[arg(long)]
+    pub project: Option<PathBuf>,
+    #[arg(long)]
+    pub vault: Option<PathBuf>,
 }
 
 #[derive(Args, Clone)]
@@ -696,6 +718,9 @@ pub fn run() -> Result<()> {
         },
         Command::Install(args) => match args.command {
             InstallCommand::Harness(args) => install::install_harness(args),
+        },
+        Command::Integration(args) => match args.command {
+            IntegrationCommand::Doctor(args) => install::integration_doctor(args),
         },
         Command::Snapshot(args) => match args.command {
             SnapshotCommand::Create(v) => snapshot::create(v.vault),

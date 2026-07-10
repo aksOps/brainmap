@@ -9,10 +9,10 @@ const TOOLS: &[&str] = &[
     "brainmap_should_ask_user",
     "brainmap_record_decision",
     "brainmap_learn_feedback",
+    "brainmap_list_pending",
+    "brainmap_preview_update",
+    "brainmap_apply_update",
     "brainmap_context",
-    "brainmap_import",
-    "brainmap_export",
-    "brainmap_restore",
     "brainmap_autopilot_status",
 ];
 
@@ -71,19 +71,107 @@ fn handle_method(root: &Path, _id: Value, method: &str, params: Value) -> Result
 }
 
 fn tool_descriptors() -> Vec<Value> {
-    TOOLS
-        .iter()
-        .map(|name| {
+    TOOLS.iter().map(|name| tool_descriptor(name)).collect()
+}
+
+fn tool_descriptor(name: &str) -> Value {
+    let (description, properties, required, extra) = match name {
+        "brainmap_decision_gate" => (
+            "Evaluate one structured local decision through the deterministic Brainmap gate.",
             json!({
-                "name": name,
-                "description": format!("Brainmap allowlisted tool: {name}"),
-                "inputSchema": {
-                    "type": "object",
-                    "additionalProperties": true
-                }
-            })
-        })
-        .collect()
+                "intent": {"type":"string"},
+                "situation": {"type":"string"},
+                "options": {"oneOf":[{"type":"array","items":{"type":"string"}},{"type":"string"}]},
+                "proposedAction": {"type":"string"},
+                "risk": {"type":"string","enum":["low","medium","high","critical"]},
+                "reversible": {"type":"boolean"},
+                "decisionType": {"type":"string"},
+                "scope": {"type":"string"},
+                "agentConfidence": {"type":"number","minimum":0,"maximum":1},
+                "dryRun": {"type":"boolean"}
+            }),
+            json!(["situation", "options", "risk", "reversible"]),
+            json!({}),
+        ),
+        "brainmap_should_ask_user" => (
+            "Check whether a proposed user question should be asked.",
+            json!({
+                "question": {"type":"string"},
+                "situation": {"type":"string"}
+            }),
+            json!(["question"]),
+            json!({}),
+        ),
+        "brainmap_record_decision" => (
+            "Record the action taken for a prior Brainmap decision ID.",
+            json!({
+                "decisionId": {"type":"string"},
+                "chosen": {"type":"string"},
+                "wasAsked": {"type":"boolean"}
+            }),
+            json!(["decisionId", "chosen"]),
+            json!({}),
+        ),
+        "brainmap_learn_feedback" => (
+            "Create a pending scoped correction for a prior decision; this does not activate it.",
+            json!({
+                "decisionId": {"type":"string"},
+                "correction": {"type":"string"},
+                "chosen": {"type":"string"},
+                "rejected": {"type":"string"}
+            }),
+            json!(["decisionId"]),
+            json!({"anyOf":[{"required":["correction"]},{"required":["chosen"]}]}),
+        ),
+        "brainmap_list_pending" => (
+            "List pending update packets without activating them.",
+            json!({}),
+            json!([]),
+            json!({}),
+        ),
+        "brainmap_preview_update" => (
+            "Preview one pending update packet before approval.",
+            json!({"packetId":{"type":"string"}}),
+            json!(["packetId"]),
+            json!({}),
+        ),
+        "brainmap_apply_update" => (
+            "Apply one explicitly approved pending update packet.",
+            json!({
+                "packetId":{"type":"string"},
+                "approved":{"type":"boolean","const":true}
+            }),
+            json!(["packetId", "approved"]),
+            json!({}),
+        ),
+        "brainmap_context" => (
+            "Read bounded decision context and local hot-path status.",
+            json!({}),
+            json!([]),
+            json!({}),
+        ),
+        "brainmap_autopilot_status" => (
+            "Read autopilot configuration and aggregate shadow metrics.",
+            json!({}),
+            json!([]),
+            json!({}),
+        ),
+        _ => unreachable!(),
+    };
+    let mut schema = json!({
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": false
+    });
+    if let (Some(schema), Some(extra)) = (schema.as_object_mut(), extra.as_object()) {
+        schema.extend(extra.clone());
+    }
+    json!({
+        "name": name,
+        "description": description,
+        "inputSchema": schema
+    })
 }
 
 fn call_tool(root: &Path, name: &str, args: Value) -> Result<Value> {
@@ -117,8 +205,13 @@ fn call_tool(root: &Path, name: &str, args: Value) -> Result<Value> {
         }
         "brainmap_record_decision" => {
             learning::record_decision(crate::cli::RecordDecisionArgs {
-                decision_id: string_arg(&args, "decisionId"),
-                chosen: string_arg(&args, "chosen"),
+                decision_id: Some(
+                    string_arg(&args, "decisionId")
+                        .context("record decision requires decisionId")?,
+                ),
+                chosen: Some(
+                    string_arg(&args, "chosen").context("record decision requires chosen")?,
+                ),
                 was_asked: args.get("wasAsked").and_then(Value::as_bool),
                 vault: Some(root.to_path_buf()),
             })?;
@@ -135,6 +228,21 @@ fn call_tool(root: &Path, name: &str, args: Value) -> Result<Value> {
             })?;
             json!({"packetCreated": true})
         }
+        "brainmap_list_pending" => learning::pending_updates_value(root, None)?,
+        "brainmap_preview_update" => {
+            let packet_id =
+                string_arg(&args, "packetId").context("preview update requires packetId")?;
+            learning::pending_updates_value(root, Some(&packet_id))?
+        }
+        "brainmap_apply_update" => {
+            if args.get("approved").and_then(Value::as_bool) != Some(true) {
+                bail!("apply update requires approved=true");
+            }
+            let packet_id =
+                string_arg(&args, "packetId").context("apply update requires packetId")?;
+            learning::apply_update_by_id(root, &packet_id)?;
+            json!({"applied": true, "packetId": packet_id})
+        }
         "brainmap_context" => {
             let status = index::status(root)?;
             json!({
@@ -150,15 +258,6 @@ fn call_tool(root: &Path, name: &str, args: Value) -> Result<Value> {
                     "fullVaultScan": false
                 }
             })
-        }
-        "brainmap_import" => {
-            json!({"supported": true, "useCli": "brainmap import --file ... --to ..."})
-        }
-        "brainmap_export" => {
-            json!({"supported": true, "useCli": "brainmap export --mode portable --vault ... --out ..."})
-        }
-        "brainmap_restore" => {
-            json!({"supported": true, "useCli": "brainmap restore --file ... --to ..."})
         }
         "brainmap_autopilot_status" => learning::autopilot_status_value(root),
         _ => unreachable!(),
@@ -268,7 +367,24 @@ mod tests {
         assert!(tools.iter().any(|tool| {
             tool.get("name").and_then(Value::as_str) == Some("brainmap_decision_gate")
         }));
+        for expected in [
+            "brainmap_list_pending",
+            "brainmap_preview_update",
+            "brainmap_apply_update",
+        ] {
+            assert!(
+                tools
+                    .iter()
+                    .any(|tool| tool.get("name").and_then(Value::as_str) == Some(expected)),
+                "missing allowlisted learning tool {expected}"
+            );
+        }
         assert!(!TOOLS.contains(&"shell"));
+        assert!(!TOOLS.contains(&"brainmap_import"));
+        for tool in tools {
+            assert_eq!(tool["inputSchema"]["additionalProperties"], false);
+            assert!(tool["inputSchema"]["properties"].is_object());
+        }
     }
 
     #[test]
@@ -279,5 +395,56 @@ mod tests {
         let message = read_message(&mut reader).unwrap().unwrap();
         assert!(message.framed);
         assert_eq!(message.body, body);
+    }
+
+    #[test]
+    fn mcp_learning_tools_preview_and_require_approval() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+        learning::learn_decision(crate::cli::LearnDecisionArgs {
+            situation: "Choose package manager".into(),
+            options: "npm|pnpm".into(),
+            chosen: "pnpm".into(),
+            rejected: Some("npm".into()),
+            rationale: None,
+            decision_type: "tooling".into(),
+            scope: "project:alpha".into(),
+            vault: Some(root.clone()),
+        })
+        .unwrap();
+        let pending = learning::pending_updates_value(&root, None).unwrap();
+        let packet_id = pending[0]["id"].as_str().unwrap();
+
+        let preview = call_tool(
+            &root,
+            "brainmap_preview_update",
+            json!({"packetId": packet_id}),
+        )
+        .unwrap();
+        assert!(preview.to_string().contains(packet_id));
+
+        let error = call_tool(
+            &root,
+            "brainmap_apply_update",
+            json!({"packetId": packet_id}),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("approved=true"));
+
+        call_tool(
+            &root,
+            "brainmap_apply_update",
+            json!({"packetId": packet_id, "approved": true}),
+        )
+        .unwrap();
+        assert_eq!(
+            learning::pending_updates_value(&root, None)
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
     }
 }

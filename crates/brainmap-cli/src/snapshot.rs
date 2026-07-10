@@ -5,17 +5,12 @@ use std::path::PathBuf;
 
 pub fn create(vault: Option<PathBuf>) -> Result<()> {
     let root = vault::resolve_vault(vault);
+    let _lock = util::FileLock::acquire(&root.join(".brainmap/locks"), "vault-maintenance.lock")?;
     let id = util::id("snap", "snapshot");
     let dir = root.join("99-meta/backups");
     fs::create_dir_all(&dir)?;
     let out = dir.join(format!("{id}.brainmap.tar.zst"));
-    export::export_cmd(crate::cli::ExportArgs {
-        mode: crate::cli::ExportMode::Portable,
-        vault: Some(root.clone()),
-        out: out.clone(),
-        encrypt: false,
-        recipient: None,
-    })?;
+    export::export_portable_snapshot(&root, &out)?;
     util::write_atomic(&root.join(".brainmap/last-snapshot"), id.as_bytes())?;
     println!("snapshot {id}");
     Ok(())

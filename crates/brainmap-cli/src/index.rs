@@ -7,6 +7,10 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub const MAX_DECISION_QUERY_TERMS: usize = 16;
+pub const MAX_DECISION_ROWS_PER_TERM: usize = 8;
+pub const MAX_DECISION_FUZZY_ROWS: usize = MAX_DECISION_QUERY_TERMS * MAX_DECISION_ROWS_PER_TERM;
+
 pub fn db_path(root: &Path) -> PathBuf {
     root.join(".brainmap/brainmap.sqlite")
 }
@@ -155,10 +159,10 @@ pub fn rebuild(root: &Path) -> Result<()> {
         )?;
         tx.commit()?;
     }
-    if final_path.exists() {
-        fs::remove_file(&final_path)?;
-    }
-    fs::rename(&tmp, &final_path)?;
+    fs::File::open(&tmp)?.sync_all()?;
+    replace_index_file(&tmp, &final_path)?;
+    #[cfg(unix)]
+    fs::File::open(root.join(".brainmap"))?.sync_all()?;
     util::write_atomic(
         &root.join(".brainmap/index-manifest.json"),
         serde_json::to_vec_pretty(&json!({
@@ -169,6 +173,37 @@ pub fn rebuild(root: &Path) -> Result<()> {
         }))?
         .as_slice(),
     )?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn replace_index_file(staged: &Path, target: &Path) -> Result<()> {
+    fs::rename(staged, target).with_context(|| {
+        format!(
+            "replace index {} with {}",
+            target.display(),
+            staged.display()
+        )
+    })?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn replace_index_file(staged: &Path, target: &Path) -> Result<()> {
+    let backup = target.with_extension(format!("sqlite.{}.backup", util::id("index", "backup")));
+    let had_target = target.exists();
+    if had_target {
+        fs::rename(target, &backup)?;
+    }
+    if let Err(error) = fs::rename(staged, target) {
+        if had_target {
+            let _ = fs::rename(&backup, target);
+        }
+        return Err(error.into());
+    }
+    if backup.exists() {
+        fs::remove_file(backup)?;
+    }
     Ok(())
 }
 
@@ -294,7 +329,9 @@ pub struct SearchResult {
 pub fn search_text(root: &Path, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
     let conn = connection(root)?;
     let mut stmt = conn.prepare(
-        "select path,title,snippet(fts_notes, 2, '[', ']', '...', 12) from fts_notes where fts_notes match ?1 limit ?2",
+        "select fts_notes.path,fts_notes.title,snippet(fts_notes, 2, '[', ']', '...', 12) \
+         from fts_notes join notes on notes.path = fts_notes.path \
+         where fts_notes match ?1 and lower(notes.sensitivity) != 'secret' limit ?2",
     )?;
     let rows = stmt.query_map(params![query, limit as i64], |row| {
         Ok(SearchResult {
@@ -492,6 +529,7 @@ pub struct DecisionRuleMatch {
     pub base_confidence: f64,
     pub evidence_count: i64,
     pub match_kind: &'static str,
+    pub margin: Option<f64>,
 }
 
 impl DecisionRuleMatch {
@@ -546,20 +584,28 @@ pub fn resolve_decision_rule(
 
     let mut candidates = Vec::new();
     let mut exact_stmt = conn.prepare(
-        "select rule_id,path,chosen,rejected,priority,scope,base_confidence,evidence_count from decision_rules where situation_normalized=?1 and (decision_type=?2 or decision_type='general') and (scope=?3 or scope='global') and status not in ('retired','stale','contradicted') order by (scope=?3) desc,(decision_type=?2) desc,priority desc,path desc limit 8",
+        "select rule_id,path,chosen,rejected,priority,scope,base_confidence,evidence_count from decision_rules where situation_normalized=?1 and (decision_type=?2 or decision_type='general') and (scope=?3 or scope='global') and status not in ('retired','stale','contradicted') order by (scope=?3) desc,(decision_type=?2) desc,priority desc,path desc limit ?4",
     )?;
-    let exact_rows = exact_stmt.query_map(params![normalized, decision_type, scope], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, i64>(4)?,
-            row.get::<_, String>(5)?,
-            row.get::<_, f64>(6)?,
-            row.get::<_, i64>(7)?,
-        ))
-    })?;
+    let exact_rows = exact_stmt.query_map(
+        params![
+            normalized,
+            decision_type,
+            scope,
+            MAX_DECISION_ROWS_PER_TERM as i64
+        ],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, f64>(6)?,
+                row.get::<_, i64>(7)?,
+            ))
+        },
+    )?;
     for row in exact_rows {
         let (
             rule_id,
@@ -582,6 +628,7 @@ pub fn resolve_decision_rule(
             base_confidence,
             evidence_count,
             match_kind: "exact",
+            margin: None,
         });
     }
     if !candidates.is_empty() {
@@ -590,28 +637,36 @@ pub fn resolve_decision_rule(
 
     let mut terms = decision_tokens(&normalized).into_iter().collect::<Vec<_>>();
     terms.sort();
-    terms.truncate(16);
+    terms.truncate(MAX_DECISION_QUERY_TERMS);
     if terms.is_empty() {
         return Ok(DecisionRuleResolution::NoMatch);
     }
     let mut stmt = conn.prepare(
-        "select r.rule_id,r.path,r.situation,r.chosen,r.rejected,r.priority,r.scope,r.base_confidence,r.evidence_count from decision_rule_terms t join decision_rules r on r.path=t.path where t.term=?1 and (r.decision_type=?2 or r.decision_type='general') and (r.scope=?3 or r.scope='global') and r.status not in ('retired','stale','contradicted') order by (r.scope=?3) desc,(r.decision_type=?2) desc,t.priority desc,t.path desc limit 8",
+        "select r.rule_id,r.path,r.situation,r.chosen,r.rejected,r.priority,r.scope,r.base_confidence,r.evidence_count from decision_rule_terms t join decision_rules r on r.path=t.path where t.term=?1 and (r.decision_type=?2 or r.decision_type='general') and (r.scope=?3 or r.scope='global') and r.status not in ('retired','stale','contradicted') order by (r.scope=?3) desc,(r.decision_type=?2) desc,t.priority desc,t.path desc limit ?4",
     )?;
     let mut seen_paths = HashSet::new();
     for term in terms {
-        let rows = stmt.query_map(params![term, decision_type, scope], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, i64>(5)?,
-                row.get::<_, String>(6)?,
-                row.get::<_, f64>(7)?,
-                row.get::<_, i64>(8)?,
-            ))
-        })?;
+        let rows = stmt.query_map(
+            params![
+                term,
+                decision_type,
+                scope,
+                MAX_DECISION_ROWS_PER_TERM as i64
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, f64>(7)?,
+                    row.get::<_, i64>(8)?,
+                ))
+            },
+        )?;
         for row in rows {
             let (
                 rule_id,
@@ -641,6 +696,7 @@ pub fn resolve_decision_rule(
                 base_confidence,
                 evidence_count,
                 match_kind: "fuzzy",
+                margin: None,
             });
         }
     }
@@ -664,17 +720,18 @@ fn resolve_candidates(
             .then_with(|| right.path.cmp(&left.path))
     });
 
-    let best = candidates.remove(0);
-    if let Some(alternative) = candidates.first()
+    let mut best = candidates.remove(0);
+    let alternative = candidates.first().cloned();
+    best.margin = alternative
+        .as_ref()
+        .map(|candidate| (best.score - candidate.score).max(0.0));
+    if let Some(alternative) = alternative
         && (best.score - alternative.score).abs() < 0.1
         && best.priority == alternative.priority
         && (best.scope == request_scope) == (alternative.scope == request_scope)
         && normalize_decision_text(&best.chosen) != normalize_decision_text(&alternative.chosen)
     {
-        return DecisionRuleResolution::Ambiguous {
-            best,
-            alternative: alternative.clone(),
-        };
+        return DecisionRuleResolution::Ambiguous { best, alternative };
     }
 
     if choice_is_available(options, &best.chosen) {
@@ -772,6 +829,25 @@ mod tests {
         assert!(status.valid);
         assert!(status.notes > 20);
         assert!(!search_text(&root, "local", 5).unwrap().is_empty());
+    }
+
+    #[test]
+    fn text_search_never_returns_secret_notes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+        fs::write(
+            root.join("secret-note.md"),
+            "---\nid: secret-note\ntype: reference\nstatus: active\nconfidence: high\nrisk_tier: suggest-only\nsensitivity: secret\n---\n# Secret\nultrasecretneedle\n",
+        )
+        .unwrap();
+        rebuild(&root).unwrap();
+
+        assert!(
+            search_text(&root, "ultrasecretneedle", 20)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

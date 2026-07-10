@@ -39,6 +39,7 @@ struct ManifestFile {
 
 pub fn export_cmd(args: ExportArgs) -> Result<()> {
     let root = vault::resolve_vault(args.vault);
+    let _lock = util::FileLock::acquire(&root.join(".brainmap/locks"), "vault-maintenance.lock")?;
     if args.encrypt || matches!(args.mode, ExportMode::Encrypted) {
         let recipient = args
             .recipient
@@ -53,9 +54,12 @@ pub fn export_cmd(args: ExportArgs) -> Result<()> {
 }
 
 fn export_archive(root: &Path, out: &Path, mode: ExportMode) -> Result<()> {
-    util::ensure_parent(out)?;
-    fs::write(out, archive_bytes(root, mode, false)?)?;
+    util::write_atomic(out, &archive_bytes(root, mode, false)?)?;
     Ok(())
+}
+
+pub(crate) fn export_portable_snapshot(root: &Path, out: &Path) -> Result<()> {
+    export_archive(root, out, ExportMode::Portable)
 }
 
 fn export_encrypted_archive(
@@ -64,9 +68,8 @@ fn export_encrypted_archive(
     mode: ExportMode,
     recipient: &str,
 ) -> Result<()> {
-    util::ensure_parent(out)?;
     let archive = archive_bytes(root, mode, true)?;
-    fs::write(out, encrypt_bytes(&archive, recipient)?)?;
+    util::write_atomic(out, &encrypt_bytes(&archive, recipient)?)?;
     Ok(())
 }
 
@@ -105,7 +108,7 @@ fn archive_bytes(root: &Path, mode: ExportMode, encrypted: bool) -> Result<Vec<u
         created_at: util::now_iso(),
         brainmap_version: env!("CARGO_PKG_VERSION").into(),
         export_mode: format!("{mode:?}").to_lowercase(),
-        schema_version: "decision-engine-v2".into(),
+        schema_version: "decision-engine-v3".into(),
         includes_indexes: matches!(mode, ExportMode::Full),
         includes_embeddings: matches!(mode, ExportMode::Full),
         includes_private_notes: !matches!(mode, ExportMode::ShareSafe),
@@ -130,8 +133,10 @@ fn should_skip(rel: &str, mode: &ExportMode) -> bool {
     if rel.starts_with("99-meta/backups/") || rel == ".brainmap/last-snapshot" {
         return true;
     }
-    if rel.contains(".brainmap/locks")
-        || rel.contains(".brainmap/web-cache")
+    if rel.contains(".brainmap/locks") {
+        return true;
+    }
+    if rel.contains(".brainmap/web-cache")
         || rel.contains(".brainmap/models")
         || rel.ends_with("brainmap.sqlite")
         || rel.ends_with("brainmap.sqlite-wal")
@@ -282,41 +287,164 @@ pub fn restore_cmd(args: RestoreArgs) -> Result<()> {
 }
 
 fn restore_archive(file: &Path, to: &Path, identity: Option<&Path>) -> Result<()> {
+    restore_archive_with_fault(file, to, identity, None)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RestorePhase {
+    Verified,
+    StagingCreated,
+    FilesWritten,
+    IndexRebuilt,
+    LinksChecked,
+    GateChecked,
+    ExistingBackedUp,
+    StagingActivated,
+}
+
+fn restore_archive_with_fault(
+    file: &Path,
+    to: &Path,
+    identity: Option<&Path>,
+    fault: Option<RestorePhase>,
+) -> Result<()> {
     let verified = verify_archive(file, identity)?;
+    fail_restore_at(RestorePhase::Verified, fault)?;
     let target = util::expand_tilde(to);
-    if target.exists() && fs::read_dir(&target)?.next().is_some() {
-        let backup = target.with_extension(format!("backup-{}", chrono::Utc::now().timestamp()));
-        fs::rename(&target, &backup)?;
+    let parent = target.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    let target_name = target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("BrainMap");
+    let lock_key = util::sha256_hex(target.to_string_lossy().as_bytes());
+    let _lock = util::FileLock::acquire(
+        &parent.join(".brainmap-restore-locks"),
+        &format!("{}.lock", &lock_key[..16]),
+    )?;
+    let _target_lock = target
+        .exists()
+        .then(|| util::FileLock::acquire(&target.join(".brainmap/locks"), "vault-maintenance.lock"))
+        .transpose()?;
+    let operation_id = util::id("restore", target_name);
+    let staging = parent.join(format!(".{target_name}.{operation_id}.staging"));
+    let backup = parent.join(format!(".{target_name}.{operation_id}.backup"));
+
+    fs::create_dir(&staging)
+        .with_context(|| format!("create restore staging vault {}", staging.display()))?;
+    if let Err(error) = fail_restore_at(RestorePhase::StagingCreated, fault) {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(error);
+    }
+
+    let staged = (|| -> Result<()> {
+        for (path, bytes) in verified.entries {
+            if path == "manifest.json" {
+                continue;
+            }
+            let rel = PathBuf::from(&path);
+            reject_hidden_traversal(&rel)?;
+            let out = staging.join(rel);
+            util::write_atomic(&out, &bytes)?;
+        }
+        fail_restore_at(RestorePhase::FilesWritten, fault)?;
+        index::rebuild(&staging)?;
+        fail_restore_at(RestorePhase::IndexRebuilt, fault)?;
+        vault::link_check(&staging)?;
+        fail_restore_at(RestorePhase::LinksChecked, fault)?;
+        let _ = gate::evaluate(
+            &staging,
+            gate::GateInput {
+                intent: "would-ask-user".into(),
+                situation: "restore smoke test".into(),
+                options: vec!["do nothing".into()],
+                proposed_action: String::new(),
+                risk: "low".into(),
+                reversible: Some(true),
+                decision_type: "general".into(),
+                scope: "global".into(),
+                agent_confidence: None,
+                dry_run: true,
+            },
+        )?;
+        fail_restore_at(RestorePhase::GateChecked, fault)
+    })();
+    if let Err(error) = staged {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(error);
+    }
+
+    let had_existing_target = target.exists();
+    if had_existing_target {
+        fs::rename(&target, &backup).with_context(|| {
+            format!(
+                "move existing vault {} to backup {}",
+                target.display(),
+                backup.display()
+            )
+        })?;
+    }
+    if let Err(error) = fail_restore_at(RestorePhase::ExistingBackedUp, fault) {
+        rollback_restore_swap(&target, &staging, &backup, had_existing_target)?;
+        return Err(error);
+    }
+
+    if let Err(error) = fs::rename(&staging, &target) {
+        rollback_restore_swap(&target, &staging, &backup, had_existing_target)?;
+        return Err(error).with_context(|| {
+            format!(
+                "activate staged vault {} at {}",
+                staging.display(),
+                target.display()
+            )
+        });
+    }
+    sync_directory(parent)?;
+    fail_restore_at(RestorePhase::StagingActivated, fault)?;
+
+    if had_existing_target {
         println!("backed up existing target to {}", backup.display());
     }
-    fs::create_dir_all(&target)?;
-    for (path, bytes) in verified.entries {
-        if path == "manifest.json" {
-            continue;
-        }
-        let rel = PathBuf::from(&path);
-        reject_hidden_traversal(&rel)?;
-        let out = target.join(rel);
-        util::write_atomic(&out, &bytes)?;
-    }
-    index::rebuild(&target)?;
-    vault::link_check(&target)?;
-    let _ = gate::evaluate(
-        &target,
-        gate::GateInput {
-            intent: "would-ask-user".into(),
-            situation: "restore smoke test".into(),
-            options: vec!["do nothing".into()],
-            proposed_action: String::new(),
-            risk: "low".into(),
-            reversible: Some(true),
-            decision_type: "general".into(),
-            scope: "global".into(),
-            agent_confidence: None,
-            dry_run: true,
-        },
-    )?;
     println!("restored {}", target.display());
+    Ok(())
+}
+
+fn fail_restore_at(phase: RestorePhase, fault: Option<RestorePhase>) -> Result<()> {
+    if fault == Some(phase) {
+        bail!("injected restore failure at {phase:?}");
+    }
+    Ok(())
+}
+
+fn rollback_restore_swap(
+    target: &Path,
+    staging: &Path,
+    backup: &Path,
+    had_existing_target: bool,
+) -> Result<()> {
+    if target.exists() {
+        fs::remove_dir_all(target)
+            .with_context(|| format!("remove failed restored vault {}", target.display()))?;
+    }
+    if had_existing_target && backup.exists() {
+        fs::rename(backup, target).with_context(|| {
+            format!(
+                "restore previous vault backup {} to {}",
+                backup.display(),
+                target.display()
+            )
+        })?;
+    }
+    if staging.exists() {
+        fs::remove_dir_all(staging)
+            .with_context(|| format!("remove restore staging vault {}", staging.display()))?;
+    }
+    sync_directory(target.parent().unwrap_or_else(|| Path::new(".")))
+}
+
+fn sync_directory(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    fs::File::open(path)?.sync_all()?;
     Ok(())
 }
 
@@ -565,7 +693,74 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(manifest.schema_version, "decision-engine-v2");
+        assert_eq!(manifest.schema_version, "decision-engine-v3");
+    }
+
+    #[test]
+    fn restore_validates_in_staging_before_replacing_the_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("Source");
+        vault::init_vault(Some(source.clone()), false, true).unwrap();
+        fs::write(source.join("restored-marker.md"), "restored").unwrap();
+        index::rebuild(&source).unwrap();
+        let archive = tmp.path().join("source.brainmap.tar.zst");
+        export_archive(&source, &archive, ExportMode::Portable).unwrap();
+
+        let target = tmp.path().join("Target");
+        vault::init_vault(Some(target.clone()), false, true).unwrap();
+        fs::write(target.join("original-marker.md"), "original").unwrap();
+
+        let error =
+            restore_archive_with_fault(&archive, &target, None, Some(RestorePhase::GateChecked))
+                .unwrap_err();
+
+        assert!(error.to_string().contains("GateChecked"));
+        assert_eq!(
+            fs::read_to_string(target.join("original-marker.md")).unwrap(),
+            "original"
+        );
+        assert!(!target.join("restored-marker.md").exists());
+    }
+
+    #[test]
+    fn every_injected_restore_failure_leaves_a_complete_old_or_new_vault() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("Source");
+        vault::init_vault(Some(source.clone()), false, true).unwrap();
+        fs::write(source.join("restored-marker.md"), "restored").unwrap();
+        index::rebuild(&source).unwrap();
+        let archive = tmp.path().join("source.brainmap.tar.zst");
+        export_archive(&source, &archive, ExportMode::Portable).unwrap();
+
+        for phase in [
+            RestorePhase::Verified,
+            RestorePhase::StagingCreated,
+            RestorePhase::FilesWritten,
+            RestorePhase::IndexRebuilt,
+            RestorePhase::LinksChecked,
+            RestorePhase::GateChecked,
+            RestorePhase::ExistingBackedUp,
+            RestorePhase::StagingActivated,
+        ] {
+            let target = tmp.path().join(format!("Target-{phase:?}"));
+            vault::init_vault(Some(target.clone()), false, true).unwrap();
+            fs::write(target.join("original-marker.md"), "original").unwrap();
+            index::rebuild(&target).unwrap();
+
+            let error =
+                restore_archive_with_fault(&archive, &target, None, Some(phase)).unwrap_err();
+            assert!(error.to_string().contains(&format!("{phase:?}")));
+
+            let old_complete = target.join("original-marker.md").exists()
+                && !target.join("restored-marker.md").exists();
+            let new_complete = !target.join("original-marker.md").exists()
+                && target.join("restored-marker.md").exists()
+                && index::status(&target).unwrap().valid;
+            assert!(
+                old_complete || new_complete,
+                "incomplete state after {phase:?}"
+            );
+        }
     }
 
     fn encode_entries(entries: &[(String, Vec<u8>)]) -> Vec<u8> {

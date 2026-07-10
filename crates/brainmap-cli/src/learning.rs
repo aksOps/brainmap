@@ -6,6 +6,7 @@ use crate::{index, markdown, privacy, util, vault};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -424,6 +425,9 @@ pub fn record_decision(args: RecordDecisionArgs) -> Result<()> {
 pub fn learn_feedback(args: LearnFeedbackArgs) -> Result<()> {
     let root = vault::resolve_vault(args.vault);
     validate_decision_id(&args.decision_id)?;
+    if args.correction.is_none() && args.chosen.is_none() {
+        bail!("feedback requires either a correction or a chosen option");
+    }
     let raw_feedback = args.correction.clone().unwrap_or_else(|| {
         format!(
             "choose {}; rejected {}",
@@ -475,6 +479,22 @@ pub fn learn_feedback(args: LearnFeedbackArgs) -> Result<()> {
         rejected,
     });
     write_packet(&root, &args.decision_id, &packet)?;
+    let rule = packet
+        .decision_rule
+        .as_ref()
+        .context("feedback packet is missing its decision rule")?;
+    util::append_jsonl(
+        &root.join("90-calibration/decision-ledger.jsonl"),
+        &json!({
+            "id": util::id("feedback", &args.decision_id),
+            "decisionId": args.decision_id,
+            "createdAt": util::now_iso(),
+            "kind": "learn-feedback",
+            "chosen": rule.chosen,
+            "rejected": rule.rejected,
+            "classification": "corrected-decision"
+        }),
+    )?;
     println!("created high-strength update packet {}", packet.id);
     Ok(())
 }
@@ -572,6 +592,9 @@ pub fn extract(args: ExtractArgs) -> Result<()> {
 
 pub fn apply(args: ApplyArgs) -> Result<()> {
     let root = vault::resolve_vault(args.vault);
+    let _maintenance =
+        util::FileLock::acquire(&root.join(".brainmap/locks"), "vault-maintenance.lock")?;
+    let _lock = util::FileLock::acquire(&root.join(".brainmap/locks"), "update-apply.lock")?;
     let dir = root.join("99-meta/pending-update-packets");
     fs::create_dir_all(&dir)?;
     let mut applied = 0usize;
@@ -614,42 +637,121 @@ pub fn apply(args: ApplyArgs) -> Result<()> {
             }
             continue;
         }
-        let target = root
-            .join("60-decision-examples")
-            .join(format!("{}.md", packet.id));
-        let body = format!(
-            "{}# {}\n\n## Claim\n\n{}\n\n{}## Evidence\n\n- {}\n\n## Links\n\n{}\n",
-            crate::markdown::frontmatter(
-                &packet.id,
-                &packet.classification,
-                "ask-before-action",
-                &packet.sensitivity
-            ),
-            packet.claim,
-            packet.claim,
-            packet
-                .decision_rule
-                .as_ref()
-                .map(markdown::decision_rule_marker)
-                .transpose()?
-                .map(|marker| format!("## Deterministic Rule\n\n{marker}\n\n"))
-                .unwrap_or_default(),
-            packet
-                .evidence
-                .first()
-                .and_then(|v| v.get("quoteOrSummary"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("packet evidence"),
-            packet.suggested_links.join("\n")
-        );
-        util::write_atomic(&target, body.as_bytes())?;
-        fs::rename(&path, path.with_extension("applied.json"))?;
+        write_applied_packet(&root, &path, &packet)?;
         applied += 1;
     }
     if applied > 0 {
         index::rebuild(&root)?;
     }
     println!("applied {applied} packet(s)");
+    Ok(())
+}
+
+pub fn pending_updates_value(root: &Path, requested_id: Option<&str>) -> Result<serde_json::Value> {
+    if let Some(id) = requested_id {
+        util::validate_safe_component("packet id", id)?;
+    }
+    let dir = root.join("99-meta/pending-update-packets");
+    fs::create_dir_all(&dir)?;
+    let mut values = Vec::new();
+    let mut paths = fs::read_dir(&dir)?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("json"))
+        .filter(|path| {
+            !path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|name| name.ends_with(".applied.json"))
+        })
+        .collect::<Vec<_>>();
+    paths.sort();
+    for path in paths {
+        let raw: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
+        if json_value_contains_secret(&raw) {
+            bail!("packet {} contains secret-like material", path.display());
+        }
+        let packet: UpdatePacket = serde_json::from_value(raw)?;
+        if requested_id.is_some_and(|id| packet.id != id) {
+            continue;
+        }
+        values.push(json!({
+            "id": packet.id,
+            "classification": packet.classification,
+            "claim": packet.claim,
+            "confidence": packet.confidence,
+            "sensitivity": packet.sensitivity,
+            "decisionRule": packet.decision_rule,
+            "status": packet.status,
+        }));
+    }
+    Ok(serde_json::Value::Array(values))
+}
+
+pub fn apply_update_by_id(root: &Path, packet_id: &str) -> Result<()> {
+    util::validate_safe_component("packet id", packet_id)?;
+    let _maintenance =
+        util::FileLock::acquire(&root.join(".brainmap/locks"), "vault-maintenance.lock")?;
+    let _lock = util::FileLock::acquire(&root.join(".brainmap/locks"), "update-apply.lock")?;
+    let dir = root.join("99-meta/pending-update-packets");
+    for entry in fs::read_dir(&dir).with_context(|| format!("read {}", dir.display()))? {
+        let path = entry?.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json")
+            || path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|name| name.ends_with(".applied.json"))
+        {
+            continue;
+        }
+        let raw: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
+        if json_value_contains_secret(&raw) {
+            bail!("packet {} contains secret-like material", path.display());
+        }
+        let packet: UpdatePacket = serde_json::from_value(raw)?;
+        if packet.id != packet_id {
+            continue;
+        }
+        if packet_contains_secret(&packet) || packet.sensitivity == "secret" {
+            bail!("packet {} contains secret-like material", packet.id);
+        }
+        write_applied_packet(root, &path, &packet)?;
+        index::rebuild(root)?;
+        return Ok(());
+    }
+    bail!("pending update packet {packet_id} was not found")
+}
+
+fn write_applied_packet(root: &Path, path: &Path, packet: &UpdatePacket) -> Result<()> {
+    let target = root
+        .join("60-decision-examples")
+        .join(format!("{}.md", packet.id));
+    let body = format!(
+        "{}# {}\n\n## Claim\n\n{}\n\n{}## Evidence\n\n- {}\n\n## Links\n\n{}\n",
+        crate::markdown::frontmatter(
+            &packet.id,
+            &packet.classification,
+            "ask-before-action",
+            &packet.sensitivity
+        ),
+        packet.claim,
+        packet.claim,
+        packet
+            .decision_rule
+            .as_ref()
+            .map(markdown::decision_rule_marker)
+            .transpose()?
+            .map(|marker| format!("## Deterministic Rule\n\n{marker}\n\n"))
+            .unwrap_or_default(),
+        packet
+            .evidence
+            .first()
+            .and_then(|value| value.get("quoteOrSummary"))
+            .and_then(|value| value.as_str())
+            .unwrap_or("packet evidence"),
+        packet.suggested_links.join("\n")
+    );
+    util::write_atomic(&target, body.as_bytes())?;
+    fs::rename(path, path.with_extension("applied.json"))?;
     Ok(())
 }
 
@@ -871,12 +973,14 @@ pub(crate) fn gate_mode_config(root: &Path) -> String {
 
 pub(crate) fn autopilot_status_value(root: &Path) -> serde_json::Value {
     let config = autopilot_config(root);
+    let shadow_metrics = shadow_metrics(root).unwrap_or_default();
     json!({
         "mode": config.mode,
         "threshold": config.threshold,
         "level": config.level,
         "gateMode": gate_mode_config(root),
-        "killSwitch": std::env::var("BRAINMAP_DISABLE_AUTOPILOT").ok().as_deref() == Some("1")
+        "killSwitch": std::env::var("BRAINMAP_DISABLE_AUTOPILOT").ok().as_deref() == Some("1"),
+        "shadowMetrics": shadow_metrics
     })
 }
 
@@ -954,25 +1058,182 @@ struct AutopilotStats {
 }
 
 fn autopilot_stats(root: &Path) -> Result<AutopilotStats> {
+    let metrics = shadow_metrics(root)?;
+    Ok(AutopilotStats {
+        decisions: metrics.decisions,
+        serious_mismatches: metrics.corrections,
+        privacy_violations: metrics.privacy_violations,
+        false_proceeds: metrics.false_proceeds,
+    })
+}
+
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ShadowMetrics {
+    decisions: usize,
+    exact_matches: usize,
+    fuzzy_matches: usize,
+    exact_match_rate: f64,
+    fuzzy_match_rate: f64,
+    agreement_opportunities: usize,
+    agreements: usize,
+    agreement_rate: f64,
+    corrections: usize,
+    correction_rate: f64,
+    false_asks: usize,
+    false_ask_rate: f64,
+    collisions: usize,
+    collision_rate: f64,
+    mean_match_margin: Option<f64>,
+    latency_p50_ms: Option<f64>,
+    latency_p95_ms: Option<f64>,
+    first_decision_at: Option<String>,
+    last_decision_at: Option<String>,
+    observation_days: f64,
+    privacy_violations: usize,
+    false_proceeds: usize,
+    raw_prompts_retained: bool,
+}
+
+#[derive(Debug)]
+struct ShadowGateSample {
+    outcome: String,
+    selected: Option<String>,
+}
+
+fn shadow_metrics(root: &Path) -> Result<ShadowMetrics> {
     let ledger = root.join("90-calibration/decision-ledger.jsonl");
     let Ok(text) = fs::read_to_string(ledger) else {
-        return Ok(AutopilotStats::default());
+        return Ok(ShadowMetrics::default());
     };
-    let mut stats = AutopilotStats::default();
+    let mut metrics = ShadowMetrics::default();
+    let mut gates = HashMap::<String, ShadowGateSample>::new();
+    let mut records = HashMap::<String, (Option<String>, bool)>::new();
+    let mut corrected = HashSet::<String>::new();
+    let mut margins = Vec::<f64>::new();
+    let mut latencies = Vec::<u64>::new();
+    let mut timestamps = Vec::<(chrono::DateTime<chrono::Utc>, String)>::new();
     for line in text.lines().filter(|line| !line.trim().is_empty()) {
-        stats.decisions += 1;
-        let lower = line.to_lowercase();
-        if lower.contains("serious mismatch") || lower.contains("corrected-decision") {
-            stats.serious_mismatches += 1;
-        }
-        if lower.contains("privacy violation") || lower.contains("hard-rule violation") {
-            stats.privacy_violations += 1;
-        }
-        if lower.contains("false proceed") {
-            stats.false_proceeds += 1;
+        let event: serde_json::Value = serde_json::from_str(line)?;
+        let kind = event.get("kind").and_then(serde_json::Value::as_str);
+        let id = event
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        match kind {
+            Some("decision-gate") => {
+                metrics.decisions += 1;
+                match event.get("matchKind").and_then(serde_json::Value::as_str) {
+                    Some("exact") => metrics.exact_matches += 1,
+                    Some("fuzzy") => metrics.fuzzy_matches += 1,
+                    _ => {}
+                }
+                metrics.collisions += usize::from(
+                    event
+                        .get("candidateCollision")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
+                );
+                if let Some(margin) = event.get("matchMargin").and_then(serde_json::Value::as_f64) {
+                    margins.push(margin);
+                }
+                if let Some(latency) = event
+                    .get("evaluationLatencyMicros")
+                    .and_then(serde_json::Value::as_u64)
+                {
+                    latencies.push(latency);
+                }
+                if let Some(created_at) = event.get("createdAt").and_then(serde_json::Value::as_str)
+                    && let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(created_at)
+                {
+                    timestamps.push((timestamp.with_timezone(&chrono::Utc), created_at.into()));
+                }
+                gates.insert(
+                    id.into(),
+                    ShadowGateSample {
+                        outcome: event
+                            .get("outcome")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or_default()
+                            .into(),
+                        selected: event
+                            .get("selectedOption")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_string),
+                    },
+                );
+            }
+            Some("record-decision") => {
+                records.insert(
+                    id.into(),
+                    (
+                        event
+                            .get("chosen")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_string),
+                        event
+                            .get("wasAsked")
+                            .and_then(serde_json::Value::as_bool)
+                            .unwrap_or(false),
+                    ),
+                );
+            }
+            Some("learn-feedback") => {
+                if let Some(decision_id) =
+                    event.get("decisionId").and_then(serde_json::Value::as_str)
+                {
+                    corrected.insert(decision_id.into());
+                }
+            }
+            _ => {}
         }
     }
-    Ok(stats)
+    for (id, gate) in &gates {
+        if let Some((recorded, was_asked)) = records.get(id) {
+            if let (Some(predicted), Some(recorded)) = (&gate.selected, recorded) {
+                metrics.agreement_opportunities += 1;
+                metrics.agreements += usize::from(predicted.eq_ignore_ascii_case(recorded));
+            }
+            if gate.outcome == "ask_user" && !was_asked {
+                metrics.false_asks += 1;
+            }
+        }
+    }
+    metrics.corrections = corrected.len();
+    metrics.exact_match_rate = metric_ratio(metrics.exact_matches, metrics.decisions);
+    metrics.fuzzy_match_rate = metric_ratio(metrics.fuzzy_matches, metrics.decisions);
+    metrics.agreement_rate = metric_ratio(metrics.agreements, metrics.agreement_opportunities);
+    metrics.correction_rate = metric_ratio(metrics.corrections, metrics.decisions);
+    metrics.false_ask_rate = metric_ratio(metrics.false_asks, metrics.decisions);
+    metrics.collision_rate = metric_ratio(metrics.collisions, metrics.decisions);
+    metrics.mean_match_margin =
+        (!margins.is_empty()).then(|| margins.iter().sum::<f64>() / margins.len() as f64);
+    latencies.sort_unstable();
+    metrics.latency_p50_ms = metric_percentile_ms(&latencies, 50);
+    metrics.latency_p95_ms = metric_percentile_ms(&latencies, 95);
+    timestamps.sort_by_key(|(timestamp, _)| *timestamp);
+    metrics.first_decision_at = timestamps.first().map(|(_, raw)| raw.clone());
+    metrics.last_decision_at = timestamps.last().map(|(_, raw)| raw.clone());
+    if let (Some((first, _)), Some((last, _))) = (timestamps.first(), timestamps.last()) {
+        metrics.observation_days = (*last - *first).num_seconds().max(0) as f64 / 86_400.0;
+    }
+    Ok(metrics)
+}
+
+fn metric_ratio(part: usize, total: usize) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        part as f64 / total as f64
+    }
+}
+
+fn metric_percentile_ms(samples_micros: &[u64], percentile: usize) -> Option<f64> {
+    if samples_micros.is_empty() {
+        return None;
+    }
+    let index = ((samples_micros.len() * percentile).div_ceil(100)).saturating_sub(1);
+    Some(samples_micros[index.min(samples_micros.len() - 1)] as f64 / 1_000.0)
 }
 
 pub fn gate_mode(vault: Option<PathBuf>, mode: &str) -> Result<()> {
@@ -1413,6 +1674,79 @@ mod tests {
         vault::init_vault(Some(root.clone()), false, true).unwrap();
         let err = autopilot_promote(Some(root), "conservative").unwrap_err();
         assert!(err.to_string().contains("promotion denied"));
+    }
+
+    #[test]
+    fn shadow_metrics_are_aggregate_and_contain_no_raw_prompts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+        let ledger = root.join("90-calibration/decision-ledger.jsonl");
+        for event in [
+            json!({
+                "id": "decision-1",
+                "kind": "decision-gate",
+                "createdAt": "2026-07-01T00:00:00Z",
+                "situation": "do-not-emit-this-raw-prompt",
+                "outcome": "proceed",
+                "selectedOption": "biome",
+                "matchKind": "exact",
+                "matchMargin": 0.4,
+                "candidateCollision": false,
+                "evaluationLatencyMicros": 100
+            }),
+            json!({
+                "id": "decision-1",
+                "kind": "record-decision",
+                "createdAt": "2026-07-01T00:01:00Z",
+                "chosen": "biome",
+                "wasAsked": false
+            }),
+            json!({
+                "id": "decision-2",
+                "kind": "decision-gate",
+                "createdAt": "2026-07-10T00:00:00Z",
+                "situation": "another-do-not-emit-prompt",
+                "outcome": "ask_user",
+                "selectedOption": null,
+                "matchKind": "fuzzy",
+                "matchMargin": 0.05,
+                "candidateCollision": true,
+                "evaluationLatencyMicros": 500
+            }),
+            json!({
+                "id": "decision-2",
+                "kind": "record-decision",
+                "createdAt": "2026-07-10T00:01:00Z",
+                "chosen": "prettier",
+                "wasAsked": false
+            }),
+            json!({
+                "id": "feedback-1",
+                "decisionId": "decision-2",
+                "kind": "learn-feedback",
+                "createdAt": "2026-07-10T00:02:00Z",
+                "chosen": "prettier"
+            }),
+        ] {
+            util::append_jsonl(&ledger, &event).unwrap();
+        }
+
+        let status = autopilot_status_value(&root);
+        let metrics = &status["shadowMetrics"];
+        assert_eq!(metrics["decisions"], 2);
+        assert_eq!(metrics["exactMatches"], 1);
+        assert_eq!(metrics["fuzzyMatches"], 1);
+        assert_eq!(metrics["agreements"], 1);
+        assert_eq!(metrics["corrections"], 1);
+        assert_eq!(metrics["falseAsks"], 1);
+        assert_eq!(metrics["collisions"], 1);
+        assert_eq!(metrics["latencyP50Ms"], 0.1);
+        assert_eq!(metrics["latencyP95Ms"], 0.5);
+        assert_eq!(metrics["observationDays"], 9.0);
+        assert_eq!(metrics["rawPromptsRetained"], false);
+        let serialized = serde_json::to_string(&status).unwrap();
+        assert!(!serialized.contains("do-not-emit"));
     }
 
     #[test]

@@ -29,6 +29,8 @@ brainmap gate --intent would-ask-user --situation "..." --options "A|B|C" --json
 
 Every calibration question must include concrete options and a free-text answer path. Ask naturally; do not expose Brainmap, policy, or gate internals in user-facing questions. Use `brainmap build-decision-engine --mode agentmemory --dry-run --questions N` for the local question set.
 
+After an action, record what happened with `brainmap record-decision --decision-id ... --chosen ...`. When the user corrects a decision, create a scoped correction with `brainmap learn-feedback --decision-id ... --chosen ... --rejected ...`. Preview pending changes with `brainmap apply --pending`; activate them only after explicit approval with `brainmap apply --pending --yes`.
+
 Do not store project archives, raw code, raw transcripts, secrets, credentials, or private keys. Use update packets. Host: {host}.
 "#
     )
@@ -47,7 +49,7 @@ Run the current local instructions and follow them:
 brainmap skill build-decision-engine --host {host}
 ```
 
-If that command fails, use this minimal fallback: run `brainmap gate --intent would-ask-user --situation "..." --options "A|B|C" --json` before decision questions; ask naturally with concrete options and a free-text path; never store secrets, raw transcripts, raw code, or project archives.
+If that command fails, use this minimal fallback: run `brainmap gate --intent would-ask-user --situation "..." --options "A|B|C" --json` before decision questions; after an action use `brainmap record-decision`; after an explicit correction use `brainmap learn-feedback`; preview with `brainmap apply --pending` and activate only with explicit approval using `brainmap apply --pending --yes`. Ask naturally with concrete options and a free-text path; never store secrets, raw transcripts, raw code, or project archives.
 "#
     )
 }

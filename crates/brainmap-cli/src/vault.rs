@@ -620,7 +620,7 @@ pub fn init_vault(vault: Option<PathBuf>, dry_run: bool, yes: bool) -> Result<()
             serde_json::to_vec_pretty(&json!({
                 "valid": false,
                 "createdAt": util::now_iso(),
-                "schemaVersion": "decision-engine-v2"
+                "schemaVersion": "decision-engine-v3"
             }))?
             .as_slice(),
         )?;
