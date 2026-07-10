@@ -42,6 +42,8 @@ jobs:
         run: cargo test --locked --workspace --all-targets --all-features
       - name: Test vendored reproducibility patch
         run: scripts/test-vendored-i18n.sh
+      - name: Audit vendored reproducibility dependencies
+        run: cargo audit --file vendor/i18n-embed-fl/Cargo.lock
       - name: Audit
         run: cargo audit
       - name: Dependency policy
