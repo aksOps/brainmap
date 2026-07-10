@@ -399,6 +399,12 @@ fn signal_strength(lower: &str) -> &'static str {
 }
 
 pub fn record_decision(args: RecordDecisionArgs) -> Result<()> {
+    record_decision_quiet(args)?;
+    println!("recorded decision");
+    Ok(())
+}
+
+pub(crate) fn record_decision_quiet(args: RecordDecisionArgs) -> Result<()> {
     let root = vault::resolve_vault(args.vault);
     let id = if let Some(id) = args.decision_id {
         validate_decision_id(&id)?;
@@ -418,13 +424,32 @@ pub fn record_decision(args: RecordDecisionArgs) -> Result<()> {
             "evidenceStrength": if args.was_asked.unwrap_or(false) { "medium" } else { "weak" }
         }),
     )?;
-    println!("recorded decision");
     Ok(())
 }
 
 pub fn learn_feedback(args: LearnFeedbackArgs) -> Result<()> {
+    if let Some(packet_id) = learn_feedback_quiet(args)? {
+        println!("created high-strength update packet {packet_id}");
+    } else {
+        println!("secret feedback rejected/redacted; no packet created");
+    }
+    Ok(())
+}
+
+pub(crate) fn learn_feedback_quiet(args: LearnFeedbackArgs) -> Result<Option<String>> {
     let root = vault::resolve_vault(args.vault);
     validate_decision_id(&args.decision_id)?;
+    if let Some(incident) = args.incident.as_deref()
+        && !matches!(
+            incident,
+            "false-proceed"
+                | "cross-domain-application"
+                | "privacy-violation"
+                | "hard-rule-violation"
+        )
+    {
+        bail!("unsupported feedback incident type: {incident}");
+    }
     if args.correction.is_none() && args.chosen.is_none() {
         bail!("feedback requires either a correction or a chosen option");
     }
@@ -446,8 +471,7 @@ pub fn learn_feedback(args: LearnFeedbackArgs) -> Result<()> {
         None,
     );
     if packet.sensitivity == "secret" {
-        println!("secret feedback rejected/redacted; no packet created");
-        return Ok(());
+        return Ok(None);
     }
     let context = decision_context(&root, &args.decision_id)?.with_context(|| {
         format!(
@@ -455,6 +479,7 @@ pub fn learn_feedback(args: LearnFeedbackArgs) -> Result<()> {
             args.decision_id
         )
     })?;
+    validate_feedback_incident(args.incident.as_deref(), &context)?;
     let (chosen, rejected) = if let Some(chosen) = args.chosen {
         (
             privacy::redact(&chosen),
@@ -492,15 +517,16 @@ pub fn learn_feedback(args: LearnFeedbackArgs) -> Result<()> {
             "kind": "learn-feedback",
             "chosen": rule.chosen,
             "rejected": rule.rejected,
-            "classification": "corrected-decision"
+            "classification": "corrected-decision",
+            "incidentType": args.incident
         }),
     )?;
-    println!("created high-strength update packet {}", packet.id);
-    Ok(())
+    Ok(Some(packet.id))
 }
 
 pub fn learn_decision(args: LearnDecisionArgs) -> Result<()> {
     let root = vault::resolve_vault(args.vault);
+    let scope = util::resolve_learning_scope(&args.scope);
     let rejected = args
         .rejected
         .clone()
@@ -530,7 +556,7 @@ pub fn learn_decision(args: LearnDecisionArgs) -> Result<()> {
     packet.decision_rule = Some(markdown::DecisionRule {
         situation: privacy::redact(&args.situation),
         decision_type: Some(privacy::redact(&args.decision_type)),
-        scope: Some(privacy::redact(&args.scope)),
+        scope: Some(privacy::redact(&scope)),
         options: args
             .options
             .split('|')
@@ -1025,21 +1051,29 @@ pub fn autopilot_promote(vault: Option<PathBuf>, to: &str) -> Result<()> {
     match to {
         "shadow" => autopilot_set(Some(root), "shadow", "conservative", None),
         "conservative" => {
-            if stats.decisions < 30 || stats.serious_mismatches >= 2 || stats.privacy_violations > 0
+            if stats.decisions < 30
+                || stats.serious_mismatches >= 2
+                || stats.privacy_violations > 0
+                || stats.confirmed_cross_domain_applications > 0
             {
                 bail!(
-                    "promotion denied: need >=30 shadow decisions, <2 serious mismatches, 0 privacy/hard-rule violations; got decisions={}, mismatches={}, violations={}",
+                    "promotion denied: need >=30 shadow decisions, <2 serious mismatches, 0 privacy/hard-rule violations, 0 confirmed cross-domain applications; got decisions={}, mismatches={}, violations={}, cross_domain={}",
                     stats.decisions,
                     stats.serious_mismatches,
-                    stats.privacy_violations
+                    stats.privacy_violations,
+                    stats.confirmed_cross_domain_applications
                 );
             }
             autopilot_set(Some(root), "conservative", "conservative", None)
         }
         "balanced" => {
-            if stats.decisions < 100 || stats.false_proceeds > 0 || stats.privacy_violations > 0 {
+            if stats.decisions < 100
+                || stats.false_proceeds > 0
+                || stats.privacy_violations > 0
+                || stats.confirmed_cross_domain_applications > 0
+            {
                 bail!(
-                    "promotion denied: balanced requires >=100 decisions, 0 false proceeds in MVP, 0 privacy/hard-rule violations"
+                    "promotion denied: balanced requires >=100 decisions, 0 false proceeds, 0 privacy/hard-rule violations, and 0 confirmed cross-domain applications"
                 );
             }
             autopilot_set(Some(root), "balanced", "balanced", None)
@@ -1055,6 +1089,7 @@ struct AutopilotStats {
     serious_mismatches: usize,
     privacy_violations: usize,
     false_proceeds: usize,
+    confirmed_cross_domain_applications: usize,
 }
 
 fn autopilot_stats(root: &Path) -> Result<AutopilotStats> {
@@ -1064,6 +1099,7 @@ fn autopilot_stats(root: &Path) -> Result<AutopilotStats> {
         serious_mismatches: metrics.corrections,
         privacy_violations: metrics.privacy_violations,
         false_proceeds: metrics.false_proceeds,
+        confirmed_cross_domain_applications: metrics.confirmed_cross_domain_applications,
     })
 }
 
@@ -1084,6 +1120,8 @@ struct ShadowMetrics {
     false_ask_rate: f64,
     collisions: usize,
     collision_rate: f64,
+    confirmed_cross_domain_applications: usize,
+    confirmed_cross_domain_application_rate: f64,
     mean_match_margin: Option<f64>,
     latency_p50_ms: Option<f64>,
     latency_p95_ms: Option<f64>,
@@ -1091,7 +1129,10 @@ struct ShadowMetrics {
     last_decision_at: Option<String>,
     observation_days: f64,
     privacy_violations: usize,
+    privacy_violation_rate: f64,
+    hard_rule_violations: usize,
     false_proceeds: usize,
+    false_proceed_rate: f64,
     raw_prompts_retained: bool,
 }
 
@@ -1184,6 +1225,21 @@ fn shadow_metrics(root: &Path) -> Result<ShadowMetrics> {
                 {
                     corrected.insert(decision_id.into());
                 }
+                match event
+                    .get("incidentType")
+                    .and_then(serde_json::Value::as_str)
+                {
+                    Some("false-proceed") => metrics.false_proceeds += 1,
+                    Some("cross-domain-application") => {
+                        metrics.confirmed_cross_domain_applications += 1;
+                    }
+                    Some("privacy-violation") => metrics.privacy_violations += 1,
+                    Some("hard-rule-violation") => {
+                        metrics.privacy_violations += 1;
+                        metrics.hard_rule_violations += 1;
+                    }
+                    _ => {}
+                }
             }
             _ => {}
         }
@@ -1206,6 +1262,12 @@ fn shadow_metrics(root: &Path) -> Result<ShadowMetrics> {
     metrics.correction_rate = metric_ratio(metrics.corrections, metrics.decisions);
     metrics.false_ask_rate = metric_ratio(metrics.false_asks, metrics.decisions);
     metrics.collision_rate = metric_ratio(metrics.collisions, metrics.decisions);
+    metrics.confirmed_cross_domain_application_rate = metric_ratio(
+        metrics.confirmed_cross_domain_applications,
+        metrics.decisions,
+    );
+    metrics.privacy_violation_rate = metric_ratio(metrics.privacy_violations, metrics.decisions);
+    metrics.false_proceed_rate = metric_ratio(metrics.false_proceeds, metrics.decisions);
     metrics.mean_match_margin =
         (!margins.is_empty()).then(|| margins.iter().sum::<f64>() / margins.len() as f64);
     latencies.sort_unstable();
@@ -1304,6 +1366,8 @@ struct DecisionContext {
     options: Vec<String>,
     decision_type: String,
     scope: String,
+    outcome: String,
+    learned_rule_applied: bool,
 }
 
 fn decision_context(root: &Path, decision_id: &str) -> Result<Option<DecisionContext>> {
@@ -1333,15 +1397,44 @@ fn decision_context(root: &Path, decision_id: &str) -> Result<Option<DecisionCon
                 .and_then(|value| value.as_str())
                 .unwrap_or("global")
                 .to_string();
+            let outcome = value
+                .get("outcome")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let learned_rule_applied = value
+                .get("appliedPolicies")
+                .and_then(|value| value.as_array())
+                .is_some_and(|policies| {
+                    policies.iter().any(|policy| {
+                        policy
+                            .as_str()
+                            .is_some_and(|path| path.contains("60-decision-examples/"))
+                    })
+                });
             return Ok(Some(DecisionContext {
                 situation: situation.to_string(),
                 options,
                 decision_type,
                 scope,
+                outcome,
+                learned_rule_applied,
             }));
         }
     }
     Ok(None)
+}
+
+fn validate_feedback_incident(incident: Option<&str>, context: &DecisionContext) -> Result<()> {
+    match incident {
+        Some("false-proceed") if context.outcome != "proceed" => {
+            bail!("false-proceed incident requires an original proceed outcome")
+        }
+        Some("cross-domain-application") if !context.learned_rule_applied => {
+            bail!("cross-domain incident requires an applied learned decision rule")
+        }
+        _ => Ok(()),
+    }
 }
 
 fn validate_decision_id(decision_id: &str) -> Result<()> {
@@ -1495,6 +1588,7 @@ mod tests {
             correction: Some("api_key=abcdef1234567890".into()),
             chosen: None,
             rejected: None,
+            incident: None,
             vault: Some(root.clone()),
         })
         .unwrap();
@@ -1726,7 +1820,8 @@ mod tests {
                 "decisionId": "decision-2",
                 "kind": "learn-feedback",
                 "createdAt": "2026-07-10T00:02:00Z",
-                "chosen": "prettier"
+                "chosen": "prettier",
+                "incidentType": "cross-domain-application"
             }),
         ] {
             util::append_jsonl(&ledger, &event).unwrap();
@@ -1741,6 +1836,9 @@ mod tests {
         assert_eq!(metrics["corrections"], 1);
         assert_eq!(metrics["falseAsks"], 1);
         assert_eq!(metrics["collisions"], 1);
+        assert_eq!(metrics["confirmedCrossDomainApplications"], 1);
+        assert_eq!(metrics["confirmedCrossDomainApplicationRate"], 0.5);
+        assert_eq!(metrics["falseProceeds"], 0);
         assert_eq!(metrics["latencyP50Ms"], 0.1);
         assert_eq!(metrics["latencyP95Ms"], 0.5);
         assert_eq!(metrics["observationDays"], 9.0);
@@ -1779,6 +1877,7 @@ mod tests {
             correction: Some("always ask before publishing".into()),
             chosen: None,
             rejected: None,
+            incident: None,
             vault: Some(root.clone()),
         })
         .unwrap_err();
@@ -1798,6 +1897,7 @@ mod tests {
             correction: Some("always ask before publishing".into()),
             chosen: None,
             rejected: None,
+            incident: None,
             vault: Some(root.clone()),
         })
         .unwrap_err();

@@ -56,6 +56,16 @@ cargo run -- brainmap mcp serve --vault ./tmp/BrainMap
 
 The server speaks stdio JSON-RPC with MCP-shaped `initialize`, `tools/list`, and `tools/call`. Exposed tools are allowlisted; no shell tool exists.
 
+Codex project integration installs project instructions, safety-only hooks, the local MCP registration, and the Brainmap skill. Preview every path first:
+
+```bash
+brainmap install harness --target codex --project . --vault ~/BrainMap --dry-run
+brainmap install harness --target codex --project . --vault ~/BrainMap
+brainmap integration doctor --target codex --project . --vault ~/BrainMap
+```
+
+The MCP path supports gate, context, action recording, structured feedback, pending preview, and explicitly approved activation. Personal learning defaults to a stable `project:<name>-<hash>` scope derived from the current directory; use `--scope global` only for an intentional global rule.
+
 ## Web UI
 
 ```bash

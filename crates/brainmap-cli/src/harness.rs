@@ -71,7 +71,9 @@ fn stdio_gate_input(request: GateRequest) -> gate::GateInput {
         risk: request.risk.unwrap_or_else(|| "medium".into()),
         reversible: request.reversible,
         decision_type: request.decision_type.unwrap_or_else(|| "general".into()),
-        scope: request.scope.unwrap_or_else(|| "global".into()),
+        scope: request
+            .scope
+            .unwrap_or_else(crate::util::default_project_scope),
         agent_confidence: request.agent_confidence,
         dry_run: false,
     }
@@ -164,7 +166,7 @@ fn hook_gate_input(host: &str, event: &str, payload: &str) -> gate::GateInput {
         risk: risk.into(),
         reversible: Some(reversible),
         decision_type: "agent-harness".into(),
-        scope: "global".into(),
+        scope: crate::util::default_project_scope(),
         agent_confidence: Some(0.86),
         dry_run: true,
     }

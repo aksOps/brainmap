@@ -1,4 +1,4 @@
-use crate::{gate, index, skill, util, vault};
+use crate::{gate, index, learning, skill, util, vault};
 use anyhow::{Context, Result, bail};
 use clap::Args;
 use serde_json::{Value, json};
@@ -13,6 +13,8 @@ pub struct InstallHarnessArgs {
     pub global: bool,
     #[arg(long)]
     pub project: Option<PathBuf>,
+    #[arg(long)]
+    pub vault: Option<PathBuf>,
     #[arg(long)]
     pub dry_run: bool,
     #[arg(long)]
@@ -47,32 +49,49 @@ pub fn integration_doctor(args: crate::cli::IntegrationDoctorArgs) -> Result<()>
         target: args.target.clone(),
         global: false,
         project: args.project.clone(),
+        vault: args.vault.clone(),
         dry_run: true,
         uninstall: false,
     };
     let planned = plan(&install_args);
+    let root = vault::resolve_vault(args.vault);
     let installed = supported && planned.iter().all(|item| item.path.exists());
     let configuration_valid = planned.iter().all(|item| {
-        if !item.path.exists()
-            || item.path.extension().and_then(|value| value.to_str()) != Some("json")
-        {
+        if !item.path.exists() {
             return true;
         }
-        fs::read(&item.path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-            .is_some()
+        if item.path.extension().and_then(|value| value.to_str()) == Some("json") {
+            return fs::read(&item.path)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .is_some();
+        }
+        if item.path.ends_with(".codex/config.toml") {
+            return fs::read_to_string(&item.path)
+                .map(|text| codex_mcp_config_status(&text, &root).valid)
+                .unwrap_or(false);
+        }
+        true
     });
     let contract = planned
         .iter()
         .filter_map(|item| fs::read_to_string(&item.path).ok())
         .collect::<Vec<_>>()
         .join("\n");
-    let recording_supported = contract.contains("record-decision");
-    let feedback_supported = contract.contains("learn-feedback");
-    let activation_requires_approval = contract.contains("apply --pending --yes");
+    let learning_probe = probe_learning_lifecycle().unwrap_or_default();
+    let recording_supported =
+        contract.contains("record-decision") && learning_probe.recording_works;
+    let feedback_supported = contract.contains("learn-feedback") && learning_probe.feedback_works;
+    let activation_requires_approval = contract.contains("apply --pending --yes")
+        && learning_probe.preview_works
+        && learning_probe.approved_apply_changes_decision;
     let executable = std::env::current_exe().is_ok_and(|path| path.exists());
-    let root = vault::resolve_vault(args.vault);
+    let mcp_vault_configured = args.target != "codex"
+        || planned
+            .iter()
+            .find(|item| item.path.ends_with(".codex/config.toml"))
+            .and_then(|item| fs::read_to_string(&item.path).ok())
+            .is_some_and(|text| codex_mcp_config_status(&text, &root).vault_matches);
     let vault_exists = root.exists();
     let index_status = index::status(&root).ok();
     let index_valid = index_status.as_ref().is_some_and(|status| status.valid);
@@ -107,6 +126,7 @@ pub fn integration_doctor(args: crate::cli::IntegrationDoctorArgs) -> Result<()>
         && recording_supported
         && feedback_supported
         && activation_requires_approval;
+    let healthy = healthy && mcp_vault_configured;
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({
@@ -121,6 +141,7 @@ pub fn integration_doctor(args: crate::cli::IntegrationDoctorArgs) -> Result<()>
             "recordingSupported": recording_supported,
             "feedbackSupported": feedback_supported,
             "activationRequiresApproval": activation_requires_approval,
+            "mcpVaultConfigured": mcp_vault_configured,
             "enforcement": enforcement,
             "healthy": healthy,
         }))?
@@ -156,9 +177,64 @@ pub fn integration_doctor(args: crate::cli::IntegrationDoctorArgs) -> Result<()>
         if !activation_requires_approval {
             issues.push("explicit activation approval missing");
         }
+        if !mcp_vault_configured {
+            issues.push("Codex MCP vault path does not match the requested vault");
+        }
         bail!("integration doctor unhealthy: {}", issues.join(", "));
     }
     Ok(())
+}
+
+#[derive(Default)]
+struct LearningLifecycleProbe {
+    recording_works: bool,
+    feedback_works: bool,
+    preview_works: bool,
+    approved_apply_changes_decision: bool,
+}
+
+fn probe_learning_lifecycle() -> Result<LearningLifecycleProbe> {
+    let temp = tempfile::tempdir()?;
+    let root = temp.path().join("BrainMap");
+    vault::init_vault_quiet(Some(root.clone()), true)?;
+    index::rebuild(&root)?;
+    let request = |dry_run| gate::GateInput {
+        intent: "integration-doctor".into(),
+        situation: "Choose package manager for integration doctor".into(),
+        options: vec!["npm".into(), "pnpm".into()],
+        proposed_action: String::new(),
+        risk: "low".into(),
+        reversible: Some(true),
+        decision_type: "tooling".into(),
+        scope: "project:integration-doctor".into(),
+        agent_confidence: None,
+        dry_run,
+    };
+    let initial = gate::evaluate(&root, request(false))?;
+    learning::record_decision_quiet(crate::cli::RecordDecisionArgs {
+        decision_id: Some(initial.decision_id.clone()),
+        chosen: Some("pnpm".into()),
+        was_asked: Some(true),
+        vault: Some(root.clone()),
+    })?;
+    let packet_id = learning::learn_feedback_quiet(crate::cli::LearnFeedbackArgs {
+        decision_id: initial.decision_id,
+        correction: None,
+        chosen: Some("pnpm".into()),
+        rejected: Some("npm".into()),
+        incident: None,
+        vault: Some(root.clone()),
+    })?
+    .context("integration learning probe did not create a packet")?;
+    let preview = learning::pending_updates_value(&root, Some(&packet_id))?;
+    learning::apply_update_by_id(&root, &packet_id)?;
+    let changed = gate::evaluate(&root, request(true))?;
+    Ok(LearningLifecycleProbe {
+        recording_works: true,
+        feedback_works: true,
+        preview_works: preview.as_array().is_some_and(|packets| packets.len() == 1),
+        approved_apply_changes_decision: changed.selected_option.as_deref() == Some("pnpm"),
+    })
 }
 
 struct PlanItem {
@@ -170,6 +246,7 @@ struct PlanItem {
 enum PlanAction {
     OwnedText(String),
     ManagedText(String),
+    ManagedToml(String),
     JsonHooks(Vec<HookBinding>),
     JsonInstruction(String),
 }
@@ -186,9 +263,9 @@ impl PlanItem {
     #[cfg(test)]
     fn contents(&self) -> Result<String> {
         match &self.action {
-            PlanAction::OwnedText(contents) | PlanAction::ManagedText(contents) => {
-                Ok(contents.clone())
-            }
+            PlanAction::OwnedText(contents)
+            | PlanAction::ManagedText(contents)
+            | PlanAction::ManagedToml(contents) => Ok(contents.clone()),
             PlanAction::JsonHooks(bindings) => json_hooks_contents(&self.path, bindings, false),
             PlanAction::JsonInstruction(instruction) => {
                 json_instruction_contents(&self.path, instruction, false)
@@ -214,9 +291,6 @@ impl PlanItem {
             println!("wrote {} ({})", self.path.display(), self.enforcement);
             return Ok(());
         }
-        if self.path.exists() {
-            backup(&self.path)?;
-        }
         let contents = match &self.action {
             PlanAction::OwnedText(_) => unreachable!(),
             PlanAction::ManagedText(block) => {
@@ -228,11 +302,31 @@ impl PlanItem {
                 };
                 merge_managed_text(&existing, block, false)
             }
+            PlanAction::ManagedToml(block) => {
+                let existing = if self.path.exists() {
+                    fs::read_to_string(&self.path)
+                        .with_context(|| format!("read {}", self.path.display()))?
+                } else {
+                    String::new()
+                };
+                merge_managed_toml(&existing, block, false)?
+            }
             PlanAction::JsonHooks(bindings) => json_hooks_contents(&self.path, bindings, false)?,
             PlanAction::JsonInstruction(instruction) => {
                 json_instruction_contents(&self.path, instruction, false)?
             }
         };
+        if self.path.exists()
+            && fs::read_to_string(&self.path)
+                .with_context(|| format!("read {}", self.path.display()))?
+                == contents
+        {
+            println!("unchanged {} ({})", self.path.display(), self.enforcement);
+            return Ok(());
+        }
+        if self.path.exists() {
+            backup(&self.path)?;
+        }
         util::write_atomic(&self.path, contents.as_bytes())?;
         println!("wrote {} ({})", self.path.display(), self.enforcement);
         Ok(())
@@ -260,6 +354,18 @@ impl PlanItem {
                 backup(&self.path)?;
                 let existing = fs::read_to_string(&self.path)?;
                 let contents = merge_managed_text(&existing, block, true);
+                if contents.is_empty() {
+                    fs::remove_file(&self.path)?;
+                    println!("removed {}", self.path.display());
+                } else {
+                    util::write_atomic(&self.path, contents.as_bytes())?;
+                    println!("updated {} ({})", self.path.display(), self.enforcement);
+                }
+            }
+            PlanAction::ManagedToml(block) => {
+                backup(&self.path)?;
+                let existing = fs::read_to_string(&self.path)?;
+                let contents = merge_managed_toml(&existing, block, true)?;
                 if contents.is_empty() {
                     fs::remove_file(&self.path)?;
                     println!("removed {}", self.path.display());
@@ -314,6 +420,11 @@ fn plan(args: &InstallHarnessArgs) -> Vec<PlanItem> {
                 path: base.join("AGENTS.md"),
                 enforcement: "instruction-only",
                 action: PlanAction::ManagedText(managed_block("codex")),
+            },
+            PlanItem {
+                path: base.join(".codex/config.toml"),
+                enforcement: "best-effort",
+                action: PlanAction::ManagedToml(codex_mcp_block(args.vault.as_deref())),
             },
             PlanItem {
                 path: base.join(".codex/hooks.json"),
@@ -408,6 +519,8 @@ fn json_instruction_contents(path: &PathBuf, instruction: &str, uninstall: bool)
 
 const MANAGED_START: &str = "<!-- BEGIN BRAINMAP MANAGED BLOCK -->";
 const MANAGED_END: &str = "<!-- END BRAINMAP MANAGED BLOCK -->";
+const TOML_MANAGED_START: &str = "# BEGIN BRAINMAP MANAGED BLOCK";
+const TOML_MANAGED_END: &str = "# END BRAINMAP MANAGED BLOCK";
 
 fn merge_managed_text(existing: &str, block: &str, uninstall: bool) -> String {
     let cleaned = remove_managed_text(existing);
@@ -419,6 +532,149 @@ fn merge_managed_text(existing: &str, block: &str, uninstall: bool) -> String {
     } else {
         format!("{cleaned}\n\n{block}")
     }
+}
+
+fn merge_managed_toml(existing: &str, block: &str, uninstall: bool) -> Result<String> {
+    let start_markers = existing.matches(TOML_MANAGED_START).count();
+    let end_markers = existing.matches(TOML_MANAGED_END).count();
+    if start_markers != end_markers || start_markers > 1 {
+        bail!("invalid or duplicate Brainmap managed TOML markers");
+    }
+    let cleaned = remove_marked_block(existing, TOML_MANAGED_START, TOML_MANAGED_END);
+    if uninstall {
+        return Ok(cleaned);
+    }
+    let existing_table = cleaned
+        .parse::<toml::Table>()
+        .context("invalid existing Codex TOML configuration")?;
+    if existing_table
+        .get("mcp_servers")
+        .and_then(toml::Value::as_table)
+        .is_some_and(|servers| servers.contains_key("brainmap"))
+    {
+        bail!(
+            "refusing to replace unmanaged Brainmap MCP table; remove [mcp_servers.brainmap] or manage it explicitly"
+        );
+    }
+    let mut out = cleaned.trim_end().to_string();
+    if !out.is_empty() {
+        out.push_str("\n\n");
+    }
+    out.push_str(block.trim());
+    out.push('\n');
+    out.parse::<toml::Table>()
+        .context("generated invalid Codex TOML configuration")?;
+    Ok(out)
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct CodexMcpConfigStatus {
+    valid: bool,
+    vault_matches: bool,
+}
+
+fn codex_mcp_config_status(text: &str, expected_vault: &std::path::Path) -> CodexMcpConfigStatus {
+    let Ok(document) = text.parse::<toml::Table>() else {
+        return CodexMcpConfigStatus::default();
+    };
+    let Some(server) = document
+        .get("mcp_servers")
+        .and_then(toml::Value::as_table)
+        .and_then(|servers| servers.get("brainmap"))
+        .and_then(toml::Value::as_table)
+    else {
+        return CodexMcpConfigStatus::default();
+    };
+    let Some(args) = server
+        .get("args")
+        .and_then(toml::Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .collect::<Vec<_>>()
+        })
+    else {
+        return CodexMcpConfigStatus::default();
+    };
+    let expected_tools = [
+        "brainmap_decision_gate",
+        "brainmap_context",
+        "brainmap_record_decision",
+        "brainmap_learn_feedback",
+        "brainmap_list_pending",
+        "brainmap_preview_update",
+        "brainmap_apply_update",
+        "brainmap_autopilot_status",
+    ];
+    let enabled_tools = server
+        .get("enabled_tools")
+        .and_then(toml::Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let tools = server.get("tools").and_then(toml::Value::as_table);
+    let approval_is_prompt = |tool: &str| {
+        tools
+            .and_then(|tools| tools.get(tool))
+            .and_then(toml::Value::as_table)
+            .and_then(|settings| settings.get("approval_mode"))
+            .and_then(toml::Value::as_str)
+            == Some("prompt")
+    };
+    let args_shape_valid = args.len() == 4 && args[..3] == ["mcp", "serve", "--vault"];
+    let valid = server.get("command").and_then(toml::Value::as_str) == Some("brainmap")
+        && args_shape_valid
+        && server.get("required").and_then(toml::Value::as_bool) == Some(true)
+        && enabled_tools == expected_tools
+        && approval_is_prompt("brainmap_learn_feedback")
+        && approval_is_prompt("brainmap_apply_update");
+    CodexMcpConfigStatus {
+        valid,
+        vault_matches: valid
+            && args.get(3).copied() == Some(expected_vault.to_string_lossy().as_ref()),
+    }
+}
+
+fn remove_marked_block(existing: &str, start_marker: &str, end_marker: &str) -> String {
+    let Some(start) = existing.find(start_marker) else {
+        return existing.trim().to_string() + if existing.trim().is_empty() { "" } else { "\n" };
+    };
+    let Some(relative_end) = existing[start..].find(end_marker) else {
+        return existing.to_string();
+    };
+    let end = start + relative_end + end_marker.len();
+    let mut out = format!("{}{}", &existing[..start], &existing[end..]);
+    while out.contains("\n\n\n") {
+        out = out.replace("\n\n\n", "\n\n");
+    }
+    out.trim().to_string() + if out.trim().is_empty() { "" } else { "\n" }
+}
+
+fn codex_mcp_block(vault: Option<&std::path::Path>) -> String {
+    let vault = vault
+        .map(util::expand_tilde)
+        .unwrap_or_else(util::default_vault);
+    let vault = serde_json::to_string(&vault.to_string_lossy()).unwrap();
+    format!(
+        r#"{TOML_MANAGED_START}
+[mcp_servers.brainmap]
+command = "brainmap"
+args = ["mcp", "serve", "--vault", {vault}]
+required = true
+enabled_tools = ["brainmap_decision_gate", "brainmap_context", "brainmap_record_decision", "brainmap_learn_feedback", "brainmap_list_pending", "brainmap_preview_update", "brainmap_apply_update", "brainmap_autopilot_status"]
+
+[mcp_servers.brainmap.tools.brainmap_learn_feedback]
+approval_mode = "prompt"
+
+[mcp_servers.brainmap.tools.brainmap_apply_update]
+approval_mode = "prompt"
+{TOML_MANAGED_END}"#
+    )
 }
 
 fn remove_managed_text(existing: &str) -> String {
@@ -625,6 +881,7 @@ mod tests {
             target: "codex".into(),
             global: false,
             project: Some(PathBuf::from("/tmp/brainmap-project")),
+            vault: None,
             dry_run: true,
             uninstall: false,
         };
@@ -635,6 +892,56 @@ mod tests {
                 .ends_with(".codex/skills/build-decision-engine/SKILL.md")
                 && item.enforcement == "instruction-only"
         }));
+        let config = plan
+            .iter()
+            .find(|item| item.path.ends_with(".codex/config.toml"))
+            .unwrap()
+            .contents()
+            .unwrap();
+        assert!(config.contains("[mcp_servers.brainmap]"));
+        assert!(config.contains("brainmap_apply_update"));
+        assert!(config.contains("approval_mode = \"prompt\""));
+    }
+
+    #[test]
+    fn codex_mcp_config_merge_is_idempotent_and_preserves_user_toml() {
+        let existing = "model = \"gpt-5\"\n";
+        let block = codex_mcp_block(Some(std::path::Path::new("/tmp/BrainMap")));
+        let merged = merge_managed_toml(existing, &block, false).unwrap();
+        let merged_again = merge_managed_toml(&merged, &block, false).unwrap();
+
+        assert_eq!(merged, merged_again);
+        assert!(merged.contains("model = \"gpt-5\""));
+        assert!(merged.contains("/tmp/BrainMap"));
+        assert_eq!(
+            merge_managed_toml(&merged, &block, true).unwrap(),
+            "model = \"gpt-5\"\n"
+        );
+    }
+
+    #[test]
+    fn codex_install_refuses_an_unmanaged_brainmap_mcp_table() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("project");
+        let config = project.join(".codex/config.toml");
+        fs::create_dir_all(config.parent().unwrap()).unwrap();
+        let original = r#"[mcp_servers.brainmap]
+command = "user-owned-brainmap"
+"#;
+        fs::write(&config, original).unwrap();
+
+        let error = install_harness(InstallHarnessArgs {
+            target: "codex".into(),
+            global: false,
+            project: Some(project),
+            vault: Some(PathBuf::from("/tmp/BrainMap")),
+            dry_run: false,
+            uninstall: false,
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("unmanaged Brainmap MCP table"));
+        assert_eq!(fs::read_to_string(config).unwrap(), original);
     }
 
     #[test]
@@ -643,6 +950,7 @@ mod tests {
             target: "codex".into(),
             global: false,
             project: Some(PathBuf::from("/tmp/brainmap-project")),
+            vault: None,
             dry_run: true,
             uninstall: false,
         };
@@ -675,6 +983,7 @@ mod tests {
             target: "codex".into(),
             global: false,
             project: Some(project.clone()),
+            vault: None,
             dry_run: false,
             uninstall: false,
         })
@@ -683,11 +992,44 @@ mod tests {
         let installed = fs::read_to_string(&agents).unwrap();
         assert!(installed.contains(original.trim()));
         assert!(installed.contains("BEGIN BRAINMAP MANAGED BLOCK"));
+        let backups_after_first_install = fs::read_dir(&project)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("AGENTS.bak-")
+            })
+            .count();
 
         install_harness(InstallHarnessArgs {
             target: "codex".into(),
             global: false,
             project: Some(project.clone()),
+            vault: None,
+            dry_run: false,
+            uninstall: false,
+        })
+        .unwrap();
+        assert_eq!(fs::read_to_string(&agents).unwrap(), installed);
+        let backups_after_second_install = fs::read_dir(&project)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("AGENTS.bak-")
+            })
+            .count();
+        assert_eq!(backups_after_second_install, backups_after_first_install);
+
+        install_harness(InstallHarnessArgs {
+            target: "codex".into(),
+            global: false,
+            project: Some(project.clone()),
+            vault: None,
             dry_run: false,
             uninstall: true,
         })
@@ -727,6 +1069,7 @@ mod tests {
             target: "opencode".into(),
             global: false,
             project: Some(project.clone()),
+            vault: None,
             dry_run: false,
             uninstall: false,
         })
@@ -750,6 +1093,7 @@ mod tests {
             target: "opencode".into(),
             global: false,
             project: Some(project),
+            vault: None,
             dry_run: false,
             uninstall: true,
         })
@@ -771,6 +1115,7 @@ mod tests {
             target: "codex".into(),
             global: false,
             project: Some(project.clone()),
+            vault: None,
             dry_run: false,
             uninstall: false,
         })
@@ -785,6 +1130,7 @@ mod tests {
             target: "codex".into(),
             global: false,
             project: Some(project),
+            vault: None,
             dry_run: false,
             uninstall: true,
         })

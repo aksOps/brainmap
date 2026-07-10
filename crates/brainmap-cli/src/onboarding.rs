@@ -36,7 +36,7 @@ struct OnboardingDecision {
 
 pub fn run(args: OnboardArgs) -> Result<()> {
     let root = vault::resolve_vault(args.vault);
-    let (answers, interactive) = if let Some(path) = args.answers {
+    let (mut answers, interactive) = if let Some(path) = args.answers {
         let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
         let answers: OnboardingAnswers =
             serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?;
@@ -44,6 +44,9 @@ pub fn run(args: OnboardArgs) -> Result<()> {
     } else {
         (interactive_answers()?, true)
     };
+    for decision in &mut answers.decisions {
+        decision.scope = util::resolve_learning_scope(&decision.scope);
+    }
     validate_answers(&answers)?;
     print_preview(&answers);
 
@@ -205,7 +208,7 @@ fn interactive_answers() -> Result<OnboardingAnswers> {
             .map(str::to_string)
             .collect::<Vec<_>>();
         let decision_type = value_or(prompt("Decision type [general]")?, "general");
-        let scope = value_or(prompt("Scope [global]")?, "global");
+        let scope = value_or(prompt("Scope [project:auto]")?, "project:auto");
         let rationale = prompt("Rationale or free-text decision")?;
         decisions.push(OnboardingDecision {
             situation,
@@ -249,7 +252,7 @@ fn default_decision_type() -> String {
 }
 
 fn default_scope() -> String {
-    "global".into()
+    "project:auto".into()
 }
 
 #[cfg(test)]

@@ -41,6 +41,10 @@ jobs:
           fi
           cargo publish --locked -p brainmap-cli
       - run: cargo build --release --locked --bin brainmap --bin brainmapd
+      - name: Generate release SBOM
+        run: |
+          cargo install --locked cargo-cyclonedx
+          scripts/generate-sbom.sh
       - name: Package
         run: |
           set -euo pipefail
@@ -50,9 +54,11 @@ jobs:
           cp target/release/brainmap "dist/${package}/"
           cp target/release/brainmapd "dist/${package}/"
           cp README.md LICENSE-MIT LICENSE-APACHE "dist/${package}/"
+          cp crates/brainmap-cli/brainmap.json "dist/${package}/brainmap.cdx.json"
+          cp crates/brainmap-cli/brainmap.json "dist/${package}-sbom.cdx.json"
           tar -C dist -czf "dist/${package}.tar.gz" "${package}"
           cd dist
-          sha256sum "${package}.tar.gz" > SHA256SUMS
+          sha256sum "${package}.tar.gz" "${package}-sbom.cdx.json" > SHA256SUMS
       - name: Prepare npm package
         run: |
           scripts/prepare-npm-package.sh
@@ -72,7 +78,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" dist/*.tar.gz dist/SHA256SUMS \
+          gh release create "${GITHUB_REF_NAME}" dist/*.tar.gz dist/*.json dist/SHA256SUMS \
             --verify-tag \
             --title "${GITHUB_REF_NAME}" \
             --notes "Linux x86_64 local Brainmap release."

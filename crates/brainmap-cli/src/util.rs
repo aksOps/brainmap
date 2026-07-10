@@ -61,6 +61,43 @@ pub fn default_vault() -> PathBuf {
     home_dir().join("BrainMap")
 }
 
+pub fn default_project_scope() -> String {
+    if let Ok(scope) = std::env::var("BRAINMAP_PROJECT_SCOPE")
+        && scope.starts_with("project:")
+        && scope.len() <= 160
+        && scope.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | ':' | '/' | '.')
+        })
+    {
+        return scope;
+    }
+    let directory = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let canonical = directory.canonicalize().unwrap_or(directory);
+    let label = canonical
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("local")
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    let hash = sha256_hex(canonical.to_string_lossy().as_bytes());
+    format!("project:{}-{}", label.trim_matches('-'), &hash[..12])
+}
+
+pub fn resolve_learning_scope(scope: &str) -> String {
+    if scope == "project:auto" {
+        default_project_scope()
+    } else {
+        scope.to_string()
+    }
+}
+
 pub fn default_config() -> PathBuf {
     std::env::var_os("BRAINMAP_CONFIG")
         .map(PathBuf::from)
@@ -90,8 +127,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
             .with_context(|| format!("create {}", tmp.display()))?;
         f.write_all(bytes)?;
         f.sync_all()?;
-        fs::rename(&tmp, path)
-            .with_context(|| format!("rename {} to {}", tmp.display(), path.display()))?;
+        replace_file_atomic(&tmp, path)?;
         #[cfg(unix)]
         File::open(parent)?.sync_all()?;
         Ok(())
@@ -100,6 +136,43 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         let _ = fs::remove_file(&tmp);
     }
     result
+}
+
+#[cfg(not(windows))]
+pub fn replace_file_atomic(staged: &Path, target: &Path) -> Result<()> {
+    fs::rename(staged, target)
+        .with_context(|| format!("replace {} with {}", target.display(), staged.display()))?;
+    Ok(())
+}
+
+#[cfg(windows)]
+pub fn replace_file_atomic(staged: &Path, target: &Path) -> Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+    };
+
+    let staged = staged
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let target = target
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let moved = unsafe {
+        MoveFileExW(
+            staged.as_ptr(),
+            target.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if moved == 0 {
+        return Err(std::io::Error::last_os_error()).context("atomically replace Windows file");
+    }
+    Ok(())
 }
 
 pub fn append_jsonl(path: &Path, value: &serde_json::Value) -> Result<()> {
@@ -119,6 +192,7 @@ pub fn append_jsonl(path: &Path, value: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug)]
 pub struct FileLock {
     file: File,
 }
@@ -133,8 +207,14 @@ impl FileLock {
             .write(true)
             .truncate(false)
             .open(&path)?;
-        FileExt::try_lock(&file)
-            .map_err(|error| anyhow::anyhow!("lock already held at {}: {error}", path.display()))?;
+        if let Err(error) = FileExt::try_lock(&file) {
+            let owner = fs::read_to_string(&path)
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "owner metadata unavailable".into());
+            bail!("lock already held at {} ({owner}): {error}", path.display());
+        }
         file.set_len(0)?;
         writeln!(file, "pid={}", std::process::id())?;
         file.sync_data()?;
@@ -311,6 +391,16 @@ mod tests {
     }
 
     #[test]
+    fn automatic_learning_scope_is_project_narrow_and_stable() {
+        let first = resolve_learning_scope("project:auto");
+        let second = resolve_learning_scope("project:auto");
+        assert!(first.starts_with("project:"));
+        assert_ne!(first, "project:auto");
+        assert_eq!(first, second);
+        assert_eq!(resolve_learning_scope("global"), "global");
+    }
+
+    #[test]
     fn concurrent_atomic_writes_never_share_temporary_files() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("policy.md");
@@ -371,5 +461,43 @@ mod tests {
         assert!(FileLock::acquire(tmp.path(), "operation.lock").is_err());
         drop(first);
         FileLock::acquire(tmp.path(), "operation.lock").unwrap();
+    }
+
+    #[test]
+    fn file_lock_recovers_after_a_process_is_killed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ready = tmp.path().join("ready");
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "util::tests::lock_owner_child", "--nocapture"])
+            .env("BRAINMAP_LOCK_OWNER_DIR", tmp.path())
+            .env("BRAINMAP_LOCK_OWNER_READY", &ready)
+            .spawn()
+            .unwrap();
+        for _ in 0..200 {
+            if ready.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(ready.exists(), "child did not acquire the process lock");
+        let active_error = FileLock::acquire(tmp.path(), "process.lock").unwrap_err();
+        assert!(active_error.to_string().contains("pid="));
+
+        child.kill().unwrap();
+        child.wait().unwrap();
+        FileLock::acquire(tmp.path(), "process.lock").unwrap();
+    }
+
+    #[test]
+    fn lock_owner_child() {
+        let (Ok(dir), Ok(ready)) = (
+            std::env::var("BRAINMAP_LOCK_OWNER_DIR"),
+            std::env::var("BRAINMAP_LOCK_OWNER_READY"),
+        ) else {
+            return;
+        };
+        let _lock = FileLock::acquire(Path::new(&dir), "process.lock").unwrap();
+        fs::write(ready, b"ready").unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(30));
     }
 }

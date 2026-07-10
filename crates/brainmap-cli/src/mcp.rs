@@ -118,7 +118,11 @@ fn tool_descriptor(name: &str) -> Value {
                 "decisionId": {"type":"string"},
                 "correction": {"type":"string"},
                 "chosen": {"type":"string"},
-                "rejected": {"type":"string"}
+                "rejected": {"type":"string"},
+                "incidentType": {
+                    "type":"string",
+                    "enum":["false-proceed","cross-domain-application","privacy-violation","hard-rule-violation"]
+                }
             }),
             json!(["decisionId"]),
             json!({"anyOf":[{"required":["correction"]},{"required":["chosen"]}]}),
@@ -178,6 +182,7 @@ fn call_tool(root: &Path, name: &str, args: Value) -> Result<Value> {
     if !TOOLS.contains(&name) {
         bail!("tool not allowlisted: {name}");
     }
+    validate_tool_arguments(name, &args)?;
     let value = match name {
         "brainmap_decision_gate" => serde_json::to_value(gate::evaluate(root, gate_input(args)?)?)?,
         "brainmap_should_ask_user" => {
@@ -197,14 +202,14 @@ fn call_tool(root: &Path, name: &str, args: Value) -> Result<Value> {
                     risk: "medium".into(),
                     reversible: Some(true),
                     decision_type: "general".into(),
-                    scope: "global".into(),
+                    scope: crate::util::default_project_scope(),
                     agent_confidence: None,
                     dry_run: false,
                 },
             )?)?
         }
         "brainmap_record_decision" => {
-            learning::record_decision(crate::cli::RecordDecisionArgs {
+            learning::record_decision_quiet(crate::cli::RecordDecisionArgs {
                 decision_id: Some(
                     string_arg(&args, "decisionId")
                         .context("record decision requires decisionId")?,
@@ -218,15 +223,16 @@ fn call_tool(root: &Path, name: &str, args: Value) -> Result<Value> {
             json!({"recorded": true})
         }
         "brainmap_learn_feedback" => {
-            learning::learn_feedback(crate::cli::LearnFeedbackArgs {
+            let packet_id = learning::learn_feedback_quiet(crate::cli::LearnFeedbackArgs {
                 decision_id: string_arg(&args, "decisionId")
                     .context("learn feedback requires decisionId")?,
                 correction: string_arg(&args, "correction"),
                 chosen: string_arg(&args, "chosen"),
                 rejected: string_arg(&args, "rejected"),
+                incident: string_arg(&args, "incidentType"),
                 vault: Some(root.to_path_buf()),
             })?;
-            json!({"packetCreated": true})
+            json!({"packetCreated": packet_id.is_some(), "packetId": packet_id})
         }
         "brainmap_list_pending" => learning::pending_updates_value(root, None)?,
         "brainmap_preview_update" => {
@@ -265,6 +271,23 @@ fn call_tool(root: &Path, name: &str, args: Value) -> Result<Value> {
     Ok(json!({"content":[{"type":"text","text":serde_json::to_string_pretty(&value)?}]}))
 }
 
+fn validate_tool_arguments(name: &str, args: &Value) -> Result<()> {
+    let arguments = args
+        .as_object()
+        .context("MCP tool arguments must be a JSON object")?;
+    let descriptor = tool_descriptor(name);
+    let properties = descriptor["inputSchema"]["properties"]
+        .as_object()
+        .context("MCP tool descriptor is missing properties")?;
+    if let Some(argument) = arguments
+        .keys()
+        .find(|argument| !properties.contains_key(*argument))
+    {
+        bail!("unsupported argument {argument} for MCP tool {name}");
+    }
+    Ok(())
+}
+
 fn gate_input(args: Value) -> Result<gate::GateInput> {
     Ok(gate::GateInput {
         intent: string_arg(&args, "intent").unwrap_or_else(|| "unknown".into()),
@@ -274,7 +297,7 @@ fn gate_input(args: Value) -> Result<gate::GateInput> {
         risk: string_arg(&args, "risk").unwrap_or_else(|| "medium".into()),
         reversible: args.get("reversible").and_then(Value::as_bool),
         decision_type: string_arg(&args, "decisionType").unwrap_or_else(|| "general".into()),
-        scope: string_arg(&args, "scope").unwrap_or_else(|| "global".into()),
+        scope: string_arg(&args, "scope").unwrap_or_else(crate::util::default_project_scope),
         agent_confidence: args.get("agentConfidence").and_then(Value::as_f64),
         dry_run: args.get("dryRun").and_then(Value::as_bool).unwrap_or(false),
     })
@@ -446,5 +469,22 @@ mod tests {
                 .len(),
             0
         );
+    }
+
+    #[test]
+    fn mcp_rejects_arguments_outside_the_advertised_schema() {
+        let error = call_tool(
+            std::path::Path::new("/unused"),
+            "brainmap_decision_gate",
+            json!({
+                "situation": "Choose formatter",
+                "options": ["biome", "prettier"],
+                "risk": "low",
+                "reversible": true,
+                "shell": "rm -rf /"
+            }),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("unsupported argument shell"));
     }
 }

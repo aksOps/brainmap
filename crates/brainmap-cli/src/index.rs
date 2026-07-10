@@ -22,6 +22,8 @@ pub fn connection(root: &Path) -> Result<Connection> {
 
 pub fn rebuild_cmd(vault: Option<PathBuf>) -> Result<()> {
     let root = vault::resolve_vault(vault);
+    let _maintenance =
+        util::FileLock::acquire(&root.join(".brainmap/locks"), "vault-maintenance.lock")?;
     rebuild(&root)?;
     println!("index rebuilt: {}", db_path(&root).display());
     Ok(())
@@ -160,7 +162,7 @@ pub fn rebuild(root: &Path) -> Result<()> {
         tx.commit()?;
     }
     fs::File::open(&tmp)?.sync_all()?;
-    replace_index_file(&tmp, &final_path)?;
+    util::replace_file_atomic(&tmp, &final_path)?;
     #[cfg(unix)]
     fs::File::open(root.join(".brainmap"))?.sync_all()?;
     util::write_atomic(
@@ -173,37 +175,6 @@ pub fn rebuild(root: &Path) -> Result<()> {
         }))?
         .as_slice(),
     )?;
-    Ok(())
-}
-
-#[cfg(unix)]
-fn replace_index_file(staged: &Path, target: &Path) -> Result<()> {
-    fs::rename(staged, target).with_context(|| {
-        format!(
-            "replace index {} with {}",
-            target.display(),
-            staged.display()
-        )
-    })?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn replace_index_file(staged: &Path, target: &Path) -> Result<()> {
-    let backup = target.with_extension(format!("sqlite.{}.backup", util::id("index", "backup")));
-    let had_target = target.exists();
-    if had_target {
-        fs::rename(target, &backup)?;
-    }
-    if let Err(error) = fs::rename(staged, target) {
-        if had_target {
-            let _ = fs::rename(&backup, target);
-        }
-        return Err(error.into());
-    }
-    if backup.exists() {
-        fs::remove_file(backup)?;
-    }
     Ok(())
 }
 
@@ -310,12 +281,65 @@ pub fn status(root: &Path) -> Result<IndexStatus> {
         });
     }
     let conn = Connection::open(&path)?;
+    let integrity: String = conn.query_row("pragma quick_check(1)", [], |row| row.get(0))?;
+    let required_tables: i64 = conn.query_row(
+        "select count(*) from sqlite_master where type='table' and name in ('notes','schema_migrations','decision_rules','decision_rule_terms','fts_notes','index_manifest')",
+        [],
+        |row| row.get(0),
+    )?;
+    if integrity != "ok" || required_tables != 6 {
+        return Ok(IndexStatus {
+            valid: false,
+            path: path.display().to_string(),
+            notes: 0,
+            message: format!(
+                "invalid index integrity or schema: quick_check={integrity}, required_tables={required_tables}/6"
+            ),
+        });
+    }
     let notes: i64 = conn.query_row("select count(*) from notes", [], |row| row.get(0))?;
+    let migration: Option<i64> =
+        conn.query_row("select max(version) from schema_migrations", [], |row| {
+            row.get(0)
+        })?;
+    let compiled_schema: Option<String> = conn
+        .query_row(
+            "select value from index_manifest where key='schemaVersion'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let compiled_valid: Option<String> = conn
+        .query_row(
+            "select value from index_manifest where key='valid'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let disk_manifest_valid = fs::read(root.join(".brainmap/index-manifest.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .is_some_and(|manifest| {
+            manifest.get("valid").and_then(|value| value.as_bool()) == Some(true)
+                && manifest
+                    .get("schemaVersion")
+                    .and_then(|value| value.as_str())
+                    == Some("decision-engine-v3")
+                && manifest.get("notes").and_then(|value| value.as_i64()) == Some(notes)
+        });
+    let valid = migration == Some(3)
+        && compiled_schema.as_deref() == Some("decision-engine-v3")
+        && compiled_valid.as_deref() == Some("true")
+        && disk_manifest_valid;
     Ok(IndexStatus {
-        valid: true,
+        valid,
         path: path.display().to_string(),
         notes: notes as usize,
-        message: "valid index".into(),
+        message: if valid {
+            "valid decision-engine-v3 index".into()
+        } else {
+            "invalid index schema v3 metadata or disk manifest".into()
+        },
     })
 }
 
@@ -525,6 +549,7 @@ pub struct DecisionRuleMatch {
     pub rejected: Vec<String>,
     pub score: f64,
     pub priority: i64,
+    pub decision_type: String,
     pub scope: String,
     pub base_confidence: f64,
     pub evidence_count: i64,
@@ -555,8 +580,8 @@ pub enum DecisionRuleResolution {
     NoMatch,
     Applicable(DecisionRuleMatch),
     Ambiguous {
-        best: DecisionRuleMatch,
-        alternative: DecisionRuleMatch,
+        best: Box<DecisionRuleMatch>,
+        alternative: Box<DecisionRuleMatch>,
     },
     OptionMismatch(DecisionRuleMatch),
 }
@@ -581,17 +606,23 @@ pub fn resolve_decision_rule(
     if normalized.is_empty() {
         return Ok(DecisionRuleResolution::NoMatch);
     }
+    let normalized_options = options
+        .iter()
+        .map(|option| normalize_decision_text(option))
+        .collect::<Vec<_>>();
+    let options_json = serde_json::to_string(&normalized_options)?;
 
     let mut candidates = Vec::new();
     let mut exact_stmt = conn.prepare(
-        "select rule_id,path,chosen,rejected,priority,scope,base_confidence,evidence_count from decision_rules where situation_normalized=?1 and (decision_type=?2 or decision_type='general') and (scope=?3 or scope='global') and status not in ('retired','stale','contradicted') order by (scope=?3) desc,(decision_type=?2) desc,priority desc,path desc limit ?4",
+        "select rule_id,path,chosen,rejected,priority,scope,base_confidence,evidence_count,decision_type from decision_rules where situation_normalized=?1 and (decision_type=?2 or decision_type='general') and (scope=?3 or scope='global') and status not in ('retired','stale','contradicted') order by (scope=?3) desc,(decision_type=?2) desc,(chosen_normalized in (select value from json_each(?5))) desc,priority desc,path desc limit ?4",
     )?;
     let exact_rows = exact_stmt.query_map(
         params![
             normalized,
             decision_type,
             scope,
-            MAX_DECISION_ROWS_PER_TERM as i64
+            MAX_DECISION_ROWS_PER_TERM as i64,
+            options_json,
         ],
         |row| {
             Ok((
@@ -603,6 +634,7 @@ pub fn resolve_decision_rule(
                 row.get::<_, String>(5)?,
                 row.get::<_, f64>(6)?,
                 row.get::<_, i64>(7)?,
+                row.get::<_, String>(8)?,
             ))
         },
     )?;
@@ -616,6 +648,7 @@ pub fn resolve_decision_rule(
             rule_scope,
             base_confidence,
             evidence_count,
+            rule_decision_type,
         ) = row?;
         candidates.push(DecisionRuleMatch {
             rule_id,
@@ -624,6 +657,7 @@ pub fn resolve_decision_rule(
             rejected: serde_json::from_str(&rejected)?,
             score: 1.0,
             priority,
+            decision_type: rule_decision_type,
             scope: rule_scope,
             base_confidence,
             evidence_count,
@@ -632,7 +666,12 @@ pub fn resolve_decision_rule(
         });
     }
     if !candidates.is_empty() {
-        return Ok(resolve_candidates(candidates, scope, options));
+        return Ok(resolve_candidates(
+            candidates,
+            decision_type,
+            scope,
+            options,
+        ));
     }
 
     let mut terms = decision_tokens(&normalized).into_iter().collect::<Vec<_>>();
@@ -641,70 +680,77 @@ pub fn resolve_decision_rule(
     if terms.is_empty() {
         return Ok(DecisionRuleResolution::NoMatch);
     }
+    let query_terms_json = serde_json::to_string(&terms)?;
+    let query_term_count = terms.len() as i64;
     let mut stmt = conn.prepare(
-        "select r.rule_id,r.path,r.situation,r.chosen,r.rejected,r.priority,r.scope,r.base_confidence,r.evidence_count from decision_rule_terms t join decision_rules r on r.path=t.path where t.term=?1 and (r.decision_type=?2 or r.decision_type='general') and (r.scope=?3 or r.scope='global') and r.status not in ('retired','stale','contradicted') order by (r.scope=?3) desc,(r.decision_type=?2) desc,t.priority desc,t.path desc limit ?4",
+        "select r.rule_id,r.path,r.situation,r.chosen,r.rejected,r.priority,r.scope,r.base_confidence,r.evidence_count,r.decision_type from decision_rule_terms t join decision_rules r on r.path=t.path where t.term in (select value from json_each(?1)) and (r.decision_type=?2 or r.decision_type='general') and (r.scope=?3 or r.scope='global') and r.status not in ('retired','stale','contradicted') group by r.path order by (cast(count(distinct t.term) as real) / max(1,(select count(*) from decision_rule_terms all_terms where all_terms.path=r.path)+?5-count(distinct t.term))) desc,(r.scope=?3) desc,(r.decision_type=?2) desc,(r.chosen_normalized in (select value from json_each(?6))) desc,r.priority desc,r.path desc limit ?4",
     )?;
-    let mut seen_paths = HashSet::new();
-    for term in terms {
-        let rows = stmt.query_map(
-            params![
-                term,
-                decision_type,
-                scope,
-                MAX_DECISION_ROWS_PER_TERM as i64
-            ],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?,
-                    row.get::<_, i64>(5)?,
-                    row.get::<_, String>(6)?,
-                    row.get::<_, f64>(7)?,
-                    row.get::<_, i64>(8)?,
-                ))
-            },
-        )?;
-        for row in rows {
-            let (
-                rule_id,
-                path,
-                rule_situation,
-                chosen,
-                rejected,
-                priority,
-                rule_scope,
-                base_confidence,
-                evidence_count,
-            ) = row?;
-            if !seen_paths.insert(path.clone()) {
-                continue;
-            }
-            let Some(score) = decision_rule_score(&rule_situation, situation) else {
-                continue;
-            };
-            candidates.push(DecisionRuleMatch {
-                rule_id,
-                path,
-                chosen,
-                rejected: serde_json::from_str(&rejected)?,
-                score,
-                priority,
-                scope: rule_scope,
-                base_confidence,
-                evidence_count,
-                match_kind: "fuzzy",
-                margin: None,
-            });
-        }
+    let rows = stmt.query_map(
+        params![
+            query_terms_json,
+            decision_type,
+            scope,
+            MAX_DECISION_FUZZY_ROWS as i64,
+            query_term_count,
+            options_json,
+        ],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, f64>(7)?,
+                row.get::<_, i64>(8)?,
+                row.get::<_, String>(9)?,
+            ))
+        },
+    )?;
+    for row in rows {
+        let (
+            rule_id,
+            path,
+            rule_situation,
+            chosen,
+            rejected,
+            priority,
+            rule_scope,
+            base_confidence,
+            evidence_count,
+            rule_decision_type,
+        ) = row?;
+        let Some(score) = decision_rule_score(&rule_situation, situation) else {
+            continue;
+        };
+        candidates.push(DecisionRuleMatch {
+            rule_id,
+            path,
+            chosen,
+            rejected: serde_json::from_str(&rejected)?,
+            score,
+            priority,
+            decision_type: rule_decision_type,
+            scope: rule_scope,
+            base_confidence,
+            evidence_count,
+            match_kind: "fuzzy",
+            margin: None,
+        });
     }
-    Ok(resolve_candidates(candidates, scope, options))
+    Ok(resolve_candidates(
+        candidates,
+        decision_type,
+        scope,
+        options,
+    ))
 }
 
 fn resolve_candidates(
     mut candidates: Vec<DecisionRuleMatch>,
+    request_decision_type: &str,
     request_scope: &str,
     options: &[String],
 ) -> DecisionRuleResolution {
@@ -716,6 +762,14 @@ fn resolve_candidates(
             .score
             .total_cmp(&left.score)
             .then_with(|| (right.scope == request_scope).cmp(&(left.scope == request_scope)))
+            .then_with(|| {
+                (right.decision_type == request_decision_type)
+                    .cmp(&(left.decision_type == request_decision_type))
+            })
+            .then_with(|| {
+                choice_is_available(options, &right.chosen)
+                    .cmp(&choice_is_available(options, &left.chosen))
+            })
             .then_with(|| right.priority.cmp(&left.priority))
             .then_with(|| right.path.cmp(&left.path))
     });
@@ -729,9 +783,16 @@ fn resolve_candidates(
         && (best.score - alternative.score).abs() < 0.1
         && best.priority == alternative.priority
         && (best.scope == request_scope) == (alternative.scope == request_scope)
+        && (best.decision_type == request_decision_type)
+            == (alternative.decision_type == request_decision_type)
+        && choice_is_available(options, &best.chosen)
+            == choice_is_available(options, &alternative.chosen)
         && normalize_decision_text(&best.chosen) != normalize_decision_text(&alternative.chosen)
     {
-        return DecisionRuleResolution::Ambiguous { best, alternative };
+        return DecisionRuleResolution::Ambiguous {
+            best: Box::new(best),
+            alternative: Box::new(alternative),
+        };
     }
 
     if choice_is_available(options, &best.chosen) {
@@ -907,6 +968,22 @@ mod tests {
             })
             .unwrap();
         assert_eq!(version, 3);
+    }
+
+    #[test]
+    fn status_rejects_an_incomplete_database_that_only_has_notes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        fs::create_dir_all(root.join(".brainmap")).unwrap();
+        let connection = Connection::open(db_path(&root)).unwrap();
+        connection
+            .execute_batch("create table notes (id text); insert into notes values ('fake');")
+            .unwrap();
+        drop(connection);
+
+        let status = status(&root).unwrap();
+        assert!(!status.valid);
+        assert!(status.message.contains("schema"));
     }
 
     #[test]

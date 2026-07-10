@@ -2,9 +2,7 @@
   "bomFormat": "CycloneDX",
   "specVersion": "1.3",
   "version": 1,
-  "serialNumber": "urn:uuid:af85fe99-e822-478d-8bc8-66ec6f86ee21",
   "metadata": {
-    "timestamp": "2026-07-10T05:16:33.076319267Z",
     "tools": [
       {
         "vendor": "CycloneDX",
@@ -14,7 +12,7 @@
     ],
     "component": {
       "type": "application",
-      "bom-ref": "path+file:///opt/codex/worktrees/ded01efe-76d3-4006-a3b6-b45cd97b0525/brainmap/crates/brainmap-cli#0.1.0",
+      "bom-ref": "pkg:cargo/brainmap-cli@0.1.0",
       "name": "brainmap-cli",
       "version": "0.1.0",
       "description": "Local deterministic personal decision engine",
@@ -38,21 +36,21 @@
       "components": [
         {
           "type": "library",
-          "bom-ref": "path+file:///opt/codex/worktrees/ded01efe-76d3-4006-a3b6-b45cd97b0525/brainmap/crates/brainmap-cli#0.1.0 bin-target-0",
+          "bom-ref": "pkg:cargo/brainmap-cli@0.1.0 bin-target-0",
           "name": "brainmap_cli",
           "version": "0.1.0",
           "purl": "pkg:cargo/brainmap-cli@0.1.0?download_url=file://.#src/lib.rs"
         },
         {
           "type": "application",
-          "bom-ref": "path+file:///opt/codex/worktrees/ded01efe-76d3-4006-a3b6-b45cd97b0525/brainmap/crates/brainmap-cli#0.1.0 bin-target-1",
+          "bom-ref": "pkg:cargo/brainmap-cli@0.1.0 bin-target-1",
           "name": "brainmap",
           "version": "0.1.0",
           "purl": "pkg:cargo/brainmap-cli@0.1.0?download_url=file://.#src/main.rs"
         },
         {
           "type": "application",
-          "bom-ref": "path+file:///opt/codex/worktrees/ded01efe-76d3-4006-a3b6-b45cd97b0525/brainmap/crates/brainmap-cli#0.1.0 bin-target-2",
+          "bom-ref": "pkg:cargo/brainmap-cli@0.1.0 bin-target-2",
           "name": "brainmapd",
           "version": "0.1.0",
           "purl": "pkg:cargo/brainmap-cli@0.1.0?download_url=file://.#src/bin/brainmapd.rs"
@@ -5428,6 +5426,32 @@
     },
     {
       "type": "library",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#serde_spanned@1.1.1",
+      "name": "serde_spanned",
+      "version": "1.1.1",
+      "description": "Serde-compatible spanned Value",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "6662b5879511e06e8999a8a235d848113e942c9124f211511b16466ee2995f26"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/serde_spanned@1.1.1",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/toml-rs/toml"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#sha2@0.10.9",
       "author": "RustCrypto Developers",
       "name": "sha2",
@@ -5998,6 +6022,84 @@
     },
     {
       "type": "library",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#toml@1.1.2+spec-1.1.0",
+      "name": "toml",
+      "version": "1.1.2+spec-1.1.0",
+      "description": "A native Rust encoder and decoder of TOML-formatted files and streams. Provides implementations of the standard Serialize/Deserialize traits for TOML data to facilitate deserializing and serializing Rust structures. ",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "81f3d15e84cbcd896376e6730314d59fb5a87f31e4b038454184435cd57defee"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/toml@1.1.2+spec-1.1.0",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/toml-rs/toml"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#toml_datetime@1.1.1+spec-1.1.0",
+      "name": "toml_datetime",
+      "version": "1.1.1+spec-1.1.0",
+      "description": "A TOML-compatible datetime type",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "3165f65f62e28e0115a00b2ebdd37eb6f3b641855f9d636d3cd4103767159ad7"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/toml_datetime@1.1.1+spec-1.1.0",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/toml-rs/toml"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#toml_parser@1.1.2+spec-1.1.0",
+      "name": "toml_parser",
+      "version": "1.1.2+spec-1.1.0",
+      "description": "Yet another format-preserving TOML parser.",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "a2abe9b86193656635d2411dc43050282ca48aa31c2451210f4202550afb7526"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/toml_parser@1.1.2+spec-1.1.0",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/toml-rs/toml"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#type-map@0.5.1",
       "author": "Jacob Brown <kardeiz@gmail.com>",
       "name": "type-map",
@@ -6427,6 +6529,32 @@
     },
     {
       "type": "library",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#winnow@1.0.3",
+      "name": "winnow",
+      "version": "1.0.3",
+      "description": "A byte-oriented, zero-copy, parser combinators library",
+      "scope": "required",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "0592e1c9d151f854e6fd382574c3a0855250e1d9b2f99d9281c6e6391af352f1"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:cargo/winnow@1.0.3",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/winnow-rs/winnow"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#x25519-dalek@2.0.1",
       "author": "Isis Lovecruft <isis@patternsinthevoid.net>, DebugSteven <debugsteven@gmail.com>, Henry de Valence <hdevalence@hdevalence.ca>",
       "name": "x25519-dalek",
@@ -6784,7 +6912,7 @@
   ],
   "dependencies": [
     {
-      "ref": "path+file:///opt/codex/worktrees/ded01efe-76d3-4006-a3b6-b45cd97b0525/brainmap/crates/brainmap-cli#0.1.0",
+      "ref": "pkg:cargo/brainmap-cli@0.1.0",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#age@0.11.3",
         "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.103",
@@ -6800,6 +6928,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#sha2@0.10.9",
         "registry+https://github.com/rust-lang/crates.io-index#tar@0.4.46",
         "registry+https://github.com/rust-lang/crates.io-index#tempfile@3.27.0",
+        "registry+https://github.com/rust-lang/crates.io-index#toml@1.1.2+spec-1.1.0",
         "registry+https://github.com/rust-lang/crates.io-index#zstd@0.13.3"
       ]
     },
@@ -7916,6 +8045,12 @@
       ]
     },
     {
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#serde_spanned@1.1.1",
+      "dependsOn": [
+        "registry+https://github.com/rust-lang/crates.io-index#serde_core@1.0.228"
+      ]
+    },
+    {
       "ref": "registry+https://github.com/rust-lang/crates.io-index#sha2@0.10.9",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
@@ -8049,6 +8184,28 @@
       ]
     },
     {
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#toml@1.1.2+spec-1.1.0",
+      "dependsOn": [
+        "registry+https://github.com/rust-lang/crates.io-index#serde_core@1.0.228",
+        "registry+https://github.com/rust-lang/crates.io-index#serde_spanned@1.1.1",
+        "registry+https://github.com/rust-lang/crates.io-index#toml_datetime@1.1.1+spec-1.1.0",
+        "registry+https://github.com/rust-lang/crates.io-index#toml_parser@1.1.2+spec-1.1.0",
+        "registry+https://github.com/rust-lang/crates.io-index#winnow@1.0.3"
+      ]
+    },
+    {
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#toml_datetime@1.1.1+spec-1.1.0",
+      "dependsOn": [
+        "registry+https://github.com/rust-lang/crates.io-index#serde_core@1.0.228"
+      ]
+    },
+    {
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#toml_parser@1.1.2+spec-1.1.0",
+      "dependsOn": [
+        "registry+https://github.com/rust-lang/crates.io-index#winnow@1.0.3"
+      ]
+    },
+    {
       "ref": "registry+https://github.com/rust-lang/crates.io-index#type-map@0.5.1",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#rustc-hash@2.1.3"
@@ -8109,6 +8266,9 @@
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#same-file@1.0.6"
       ]
+    },
+    {
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#winnow@1.0.3"
     },
     {
       "ref": "registry+https://github.com/rust-lang/crates.io-index#x25519-dalek@2.0.1",

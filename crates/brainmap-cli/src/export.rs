@@ -84,11 +84,18 @@ fn archive_bytes(root: &Path, mode: ExportMode, encrypted: bool) -> Result<Vec<u
         if should_skip(&rel, &mode) {
             continue;
         }
+        let source_bytes = fs::read(&path)?;
+        if export_file_is_secret(&source_bytes) {
+            if matches!(mode, ExportMode::ShareSafe) {
+                continue;
+            }
+            bail!("refusing to export secret-like or secret-classified file: {rel}");
+        }
         let collision_key = util::portable_archive_collision_key(&rel)?;
         if !portable_keys.insert(collision_key) {
             bail!("portable archive path collision: {rel}");
         }
-        let mut bytes = fs::read(&path)?;
+        let mut bytes = source_bytes;
         if matches!(mode, ExportMode::ShareSafe) {
             bytes = privacy::redact(&String::from_utf8_lossy(&bytes)).into_bytes();
         }
@@ -127,6 +134,19 @@ fn archive_bytes(root: &Path, mode: ExportMode, encrypted: bool) -> Result<Vec<u
     }
     let encoder = tar.into_inner()?;
     encoder.finish().map_err(Into::into)
+}
+
+fn export_file_is_secret(bytes: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return false;
+    };
+    privacy::contains_secret(text)
+        || text.lines().any(|line| {
+            line.split_once(':').is_some_and(|(key, value)| {
+                key.trim().eq_ignore_ascii_case("sensitivity")
+                    && value.trim().eq_ignore_ascii_case("secret")
+            })
+        })
 }
 
 fn should_skip(rel: &str, mode: &ExportMode) -> bool {
@@ -206,6 +226,15 @@ fn verify_archive(file: &Path, identity: Option<&Path>) -> Result<VerifiedArchiv
             manifest.format_version
         );
     }
+    if !matches!(
+        manifest.schema_version.as_str(),
+        "decision-engine-v2" | "decision-engine-v3"
+    ) {
+        bail!(
+            "unsupported decision engine schema: {}",
+            manifest.schema_version
+        );
+    }
     let mut manifest_paths = HashSet::new();
     let mut manifest_collision_keys = HashSet::new();
     for file in &manifest.files {
@@ -224,6 +253,9 @@ fn verify_archive(file: &Path, identity: Option<&Path>) -> Result<VerifiedArchiv
             .get(normalized_path.as_str())
             .copied()
             .with_context(|| format!("missing {}", file.path))?;
+        if export_file_is_secret(bytes) {
+            bail!("refusing secret-like archive content: {}", file.path);
+        }
         let got = util::sha256_hex(bytes);
         if got != file.sha256 {
             bail!("checksum mismatch for {}", file.path);
@@ -655,6 +687,81 @@ mod tests {
         let err = archive_bytes(&root, ExportMode::Portable, false).unwrap_err();
 
         assert!(err.to_string().contains("portable archive path collision"));
+    }
+
+    #[test]
+    fn portable_and_full_exports_reject_secret_files_while_share_safe_skips_them() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+        fs::write(
+            root.join("secret-note.md"),
+            "---\nid: secret\ntype: reference\nsensitivity: secret\n---\napi_key=abcdef1234567890\n",
+        )
+        .unwrap();
+
+        for mode in [ExportMode::Portable, ExportMode::Full] {
+            let error = archive_bytes(&root, mode, false).unwrap_err();
+            assert!(error.to_string().contains("refusing to export secret"));
+        }
+        let share_safe = archive_bytes(&root, ExportMode::ShareSafe, false).unwrap();
+        let entries = read_archive_bytes(&share_safe).unwrap();
+        assert!(entries.iter().all(|(path, _)| path != "secret-note.md"));
+    }
+
+    #[test]
+    fn verify_rejects_unknown_decision_engine_schema() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+        let out = tmp.path().join("demo.brainmap.tar.zst");
+        export_archive(&root, &out, ExportMode::Portable).unwrap();
+        let mut entries = read_archive(&out, None).unwrap();
+        let manifest = entries
+            .iter_mut()
+            .find(|(path, _)| path == "manifest.json")
+            .unwrap();
+        let mut value: serde_json::Value = serde_json::from_slice(&manifest.1).unwrap();
+        value["schemaVersion"] = serde_json::json!("decision-engine-v999");
+        manifest.1 = serde_json::to_vec_pretty(&value).unwrap();
+        fs::write(&out, encode_entries(&entries)).unwrap();
+
+        let error = verify_archive(&out, None).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported decision engine schema")
+        );
+    }
+
+    #[test]
+    fn verify_rejects_secret_bearing_archive_content_before_restore() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+        let out = tmp.path().join("malicious.brainmap.tar.zst");
+        export_archive(&root, &out, ExportMode::Portable).unwrap();
+        let mut entries = read_archive(&out, None).unwrap();
+        let secret_path = "notes/injected-secret.md";
+        let secret = b"---\nid: injected-secret\ntype: reference\nsensitivity: secret\n---\napi_key=abcdef1234567890\n".to_vec();
+        let manifest = entries
+            .iter_mut()
+            .find(|(path, _)| path == "manifest.json")
+            .unwrap();
+        let mut value: serde_json::Value = serde_json::from_slice(&manifest.1).unwrap();
+        value["files"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "path": secret_path,
+                "sha256": util::sha256_hex(&secret)
+            }));
+        manifest.1 = serde_json::to_vec_pretty(&value).unwrap();
+        entries.push((secret_path.into(), secret));
+        fs::write(&out, encode_entries(&entries)).unwrap();
+
+        let error = verify_archive(&out, None).unwrap_err();
+        assert!(error.to_string().contains("secret-like archive content"));
     }
 
     #[test]

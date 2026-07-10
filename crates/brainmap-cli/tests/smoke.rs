@@ -122,6 +122,37 @@ fn production_smoke_cli_flow() {
     assert!(eval.contains("\"falseAsk\": 0"));
     assert!(eval.contains("\"falseBlock\": 0"));
     assert!(eval.contains("\"wrongChoice\": 0"));
+    let report: serde_json::Value = serde_json::from_str(&eval).expect("parse eval report");
+    let recall = &report["learnedRuleRecall"];
+    let exact_expected = recall["exactExpected"].as_u64().expect("exact denominator");
+    let exact_correct = recall["exactCorrect"].as_u64().expect("exact numerator");
+    let paraphrase_expected = recall["paraphraseExpected"]
+        .as_u64()
+        .expect("paraphrase denominator");
+    let paraphrase_correct = recall["paraphraseCorrect"]
+        .as_u64()
+        .expect("paraphrase numerator");
+    let negative_expected = recall["negativeExpected"]
+        .as_u64()
+        .expect("negative denominator");
+    let negative_correct = recall["negativeCorrect"]
+        .as_u64()
+        .expect("negative numerator");
+    assert!(exact_expected > 0);
+    assert_eq!(exact_correct, exact_expected, "exact recall must be 100%");
+    assert!(paraphrase_expected >= 5);
+    assert!(
+        paraphrase_correct * 100 >= paraphrase_expected * 95,
+        "supported paraphrase recall must be at least 95%"
+    );
+    assert!(
+        negative_expected >= 100,
+        "the executable eval suite must contain at least 100 negative cases"
+    );
+    assert_eq!(
+        negative_correct, negative_expected,
+        "negative cases must have zero learned-rule applications"
+    );
 }
 
 #[test]
@@ -137,6 +168,227 @@ fn bench_scale_cli_reports_envelope_fields() {
     assert!(output.contains("\"candidateBounds\""));
     assert!(output.contains("\"host\""));
     assert!(output.contains("\"contextFastMs\""));
+}
+
+#[test]
+fn eval_exits_nonzero_when_an_expected_result_is_wrong() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path().join("BrainMap");
+    let suite = tmp.path().join("suite");
+    std::fs::create_dir_all(&suite).expect("create eval suite");
+    std::fs::write(
+        suite.join("failing.jsonl"),
+        r#"{"id":"expected-mismatch","situation":"Choose an unlearned tool","options":["A","B"],"risk":"low","reversible":true,"expectedOutcome":"proceed","expectedChoice":null}
+"#,
+    )
+    .expect("write failing eval case");
+    ok(&["init-vault", "--vault", path(&root), "--yes"]);
+
+    fails(
+        &["eval", "--vault", path(&root), "--suite", path(&suite)],
+        "evaluation contract failed",
+    );
+}
+
+#[test]
+fn legacy_decision_commands_record_project_narrow_defaults() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path().join("BrainMap");
+    ok(&["init-vault", "--vault", path(&root), "--yes"]);
+    ok(&["index", "rebuild", "--vault", path(&root)]);
+
+    ok(&[
+        "decide",
+        "Choose a local test runner",
+        "--options",
+        "cargo-nextest|cargo-test",
+        "--risk",
+        "low",
+        "--reversible",
+        "true",
+        "--json",
+        "--vault",
+        path(&root),
+    ]);
+    ok(&[
+        "should-ask-user",
+        "--question",
+        "Which local test runner should I use?",
+        "--json",
+        "--vault",
+        path(&root),
+    ]);
+
+    let ledger = std::fs::read_to_string(root.join("90-calibration/decision-ledger.jsonl"))
+        .expect("read decision ledger");
+    let records = ledger
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("parse ledger row"))
+        .collect::<Vec<_>>();
+    assert_eq!(records.len(), 2);
+    assert!(records.iter().all(|record| {
+        record["scope"]
+            .as_str()
+            .is_some_and(|scope| scope.starts_with("project:"))
+    }));
+    assert!(records.iter().all(|record| record["scope"] != "global"));
+}
+
+#[test]
+fn structured_feedback_incidents_drive_prompt_free_shadow_metrics() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path().join("BrainMap");
+    ok(&["init-vault", "--vault", path(&root), "--yes"]);
+    ok(&["index", "rebuild", "--vault", path(&root)]);
+    ok(&[
+        "learn-decision",
+        "--situation",
+        "Choose formatter for incident project",
+        "--options",
+        "biome|prettier",
+        "--chosen",
+        "biome",
+        "--rejected",
+        "prettier",
+        "--decision-type",
+        "tooling",
+        "--scope",
+        "project:incident",
+        "--vault",
+        path(&root),
+    ]);
+    ok(&["apply", "--pending", "--yes", "--vault", path(&root)]);
+
+    let learned = ok(&[
+        "gate",
+        "--json",
+        "--situation",
+        "Choose formatter for incident project",
+        "--options",
+        "biome|prettier",
+        "--risk",
+        "low",
+        "--reversible",
+        "true",
+        "--decision-type",
+        "tooling",
+        "--scope",
+        "project:incident",
+        "--vault",
+        path(&root),
+    ]);
+    let learned: serde_json::Value = serde_json::from_str(&learned).expect("parse learned gate");
+    assert_eq!(learned["outcome"], "proceed");
+    ok(&[
+        "learn-feedback",
+        "--decision-id",
+        learned["decisionId"].as_str().expect("learned decision id"),
+        "--chosen",
+        "prettier",
+        "--rejected",
+        "biome",
+        "--incident",
+        "cross-domain-application",
+        "--vault",
+        path(&root),
+    ]);
+
+    let policy = ok(&[
+        "gate",
+        "--json",
+        "--situation",
+        "Choose v1 storage",
+        "--options",
+        "Markdown+JSONL|SQLite|External Vector DB",
+        "--risk",
+        "low",
+        "--reversible",
+        "true",
+        "--decision-type",
+        "architecture",
+        "--scope",
+        "global",
+        "--vault",
+        path(&root),
+    ]);
+    let policy: serde_json::Value = serde_json::from_str(&policy).expect("parse policy gate");
+    assert_eq!(policy["outcome"], "proceed");
+    fails(
+        &[
+            "learn-feedback",
+            "--decision-id",
+            policy["decisionId"].as_str().expect("policy decision id"),
+            "--chosen",
+            "SQLite",
+            "--incident",
+            "cross-domain-application",
+            "--vault",
+            path(&root),
+        ],
+        "requires an applied learned decision rule",
+    );
+    ok(&[
+        "learn-feedback",
+        "--decision-id",
+        policy["decisionId"].as_str().expect("policy decision id"),
+        "--chosen",
+        "SQLite",
+        "--rejected",
+        "Markdown+JSONL",
+        "--incident",
+        "false-proceed",
+        "--vault",
+        path(&root),
+    ]);
+
+    let unlearned = ok(&[
+        "gate",
+        "--json",
+        "--situation",
+        "Choose an unlearned deployment tool",
+        "--options",
+        "A|B",
+        "--risk",
+        "low",
+        "--reversible",
+        "true",
+        "--decision-type",
+        "tooling",
+        "--scope",
+        "project:incident",
+        "--vault",
+        path(&root),
+    ]);
+    let unlearned: serde_json::Value =
+        serde_json::from_str(&unlearned).expect("parse unlearned gate");
+    assert_eq!(unlearned["outcome"], "ask_user");
+    fails(
+        &[
+            "learn-feedback",
+            "--decision-id",
+            unlearned["decisionId"].as_str().expect("unlearned id"),
+            "--chosen",
+            "A",
+            "--incident",
+            "false-proceed",
+            "--vault",
+            path(&root),
+        ],
+        "requires an original proceed outcome",
+    );
+
+    let status = ok(&["autopilot", "status", "--vault", path(&root)]);
+    let status: serde_json::Value = serde_json::from_str(&status).expect("parse autopilot status");
+    let metrics = &status["shadowMetrics"];
+    assert_eq!(metrics["confirmedCrossDomainApplications"], 1);
+    assert_eq!(metrics["falseProceeds"], 1);
+    assert_eq!(metrics["privacyViolations"], 0);
+    assert_eq!(metrics["rawPromptsRetained"], false);
+    assert!(
+        !status
+            .to_string()
+            .contains("Choose formatter for incident project")
+    );
 }
 
 #[test]
@@ -162,6 +414,7 @@ fn onboarding_answer_file_changes_a_scoped_decision() {
     .expect("write onboarding answers");
 
     ok(&["init-vault", "--vault", path(&root), "--yes"]);
+    let before_preview = tree_snapshot(&root);
     let preview = ok(&[
         "onboard",
         "--answers",
@@ -171,6 +424,7 @@ fn onboarding_answer_file_changes_a_scoped_decision() {
         "--dry-run",
     ]);
     assert!(preview.contains("would learn"));
+    assert_eq!(tree_snapshot(&root), before_preview);
     let before_apply = ok(&[
         "gate",
         "--json",
@@ -247,7 +501,7 @@ fn interactive_onboarding_completes_on_a_clean_vault() {
         .take()
         .expect("onboarding stdin")
         .write_all(
-            b"Choose formatter for interactive project\nbiome|prettier\nbiome\nprettier\ntooling\nproject:interactive\nFast local formatter\n\ny\n",
+            b"Choose formatter for interactive project\nbiome|prettier\nbiome\nprettier\ntooling\n\nFast local formatter\n\ny\n",
         )
         .expect("answer onboarding prompts");
     let output = child.wait_with_output().expect("wait for onboarding");
@@ -271,13 +525,13 @@ fn interactive_onboarding_completes_on_a_clean_vault() {
         "true",
         "--decision-type",
         "tooling",
-        "--scope",
-        "project:interactive",
         "--vault",
         path(&root),
         "--dry-run",
     ]);
     assert!(result.contains("\"selectedOption\": \"biome\""));
+    assert!(result.contains("\"ruleScope\": \"project:"));
+    assert!(!result.contains("\"ruleScope\": \"global\""));
 }
 
 #[test]
@@ -295,6 +549,8 @@ fn codex_integration_doctor_verifies_the_learning_contract() {
         "codex",
         "--project",
         path(&project),
+        "--vault",
+        path(&root),
     ]);
 
     let doctor = ok(&[
@@ -312,6 +568,146 @@ fn codex_integration_doctor_verifies_the_learning_contract() {
     assert!(doctor.contains("\"recordingSupported\": true"));
     assert!(doctor.contains("\"feedbackSupported\": true"));
     assert!(doctor.contains("\"activationRequiresApproval\": true"));
+}
+
+#[test]
+fn codex_integration_doctor_rejects_invalid_toml_configuration() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path().join("BrainMap");
+    let project = tmp.path().join("Project");
+    std::fs::create_dir_all(&project).expect("create project");
+    ok(&["init-vault", "--vault", path(&root), "--yes"]);
+    ok(&["index", "rebuild", "--vault", path(&root)]);
+    ok(&[
+        "install",
+        "harness",
+        "--target",
+        "codex",
+        "--project",
+        path(&project),
+        "--vault",
+        path(&root),
+    ]);
+    let config = project.join(".codex/config.toml");
+    let mut invalid = std::fs::read_to_string(&config).expect("read Codex config");
+    invalid.push_str("\ninvalid = [\n");
+    std::fs::write(&config, invalid).expect("corrupt Codex config");
+
+    fails(
+        &[
+            "integration",
+            "doctor",
+            "--target",
+            "codex",
+            "--project",
+            path(&project),
+            "--vault",
+            path(&root),
+        ],
+        "invalid host configuration",
+    );
+}
+
+#[test]
+fn codex_mcp_adapter_completes_the_learning_lifecycle() {
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::process::Stdio;
+
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path().join("BrainMap");
+    ok(&["init-vault", "--vault", path(&root), "--yes"]);
+    ok(&["index", "rebuild", "--vault", path(&root)]);
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_brainmap"))
+        .args(["mcp", "serve", "--vault", path(&root)])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn Brainmap MCP adapter");
+    let mut stdin = child.stdin.take().expect("MCP stdin");
+    let mut stdout = BufReader::new(child.stdout.take().expect("MCP stdout"));
+    let mut stderr = child.stderr.take().expect("MCP stderr");
+    {
+        let mut request_id = 0u64;
+        let mut call = |name: &str, arguments: serde_json::Value| {
+            request_id += 1;
+            let request = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": "tools/call",
+                "params": {"name": name, "arguments": arguments}
+            });
+            writeln!(stdin, "{}", serde_json::to_string(&request).unwrap()).unwrap();
+            stdin.flush().unwrap();
+            let mut line = String::new();
+            let read = stdout.read_line(&mut line).unwrap();
+            if read == 0 {
+                let mut error = String::new();
+                stderr.read_to_string(&mut error).unwrap();
+                panic!("MCP server closed stdout: {error}");
+            }
+            let response: serde_json::Value = serde_json::from_str(&line).unwrap();
+            assert!(response.get("error").is_none(), "MCP error: {response}");
+            let text = response["result"]["content"][0]["text"]
+                .as_str()
+                .expect("MCP text result");
+            serde_json::from_str::<serde_json::Value>(text).expect("parse MCP tool payload")
+        };
+
+        let gate_arguments = serde_json::json!({
+            "intent": "would-ask-user",
+            "situation": "Choose package manager through Codex MCP",
+            "options": ["npm", "pnpm"],
+            "risk": "low",
+            "reversible": true,
+            "decisionType": "tooling",
+            "scope": "project:codex-mcp"
+        });
+        let first = call("brainmap_decision_gate", gate_arguments.clone());
+        assert_eq!(first["outcome"], "ask_user");
+        let decision_id = first["decisionId"].as_str().unwrap();
+
+        let recorded = call(
+            "brainmap_record_decision",
+            serde_json::json!({
+                "decisionId": decision_id,
+                "chosen": "pnpm",
+                "wasAsked": true
+            }),
+        );
+        assert_eq!(recorded["recorded"], true);
+        let feedback = call(
+            "brainmap_learn_feedback",
+            serde_json::json!({
+                "decisionId": decision_id,
+                "chosen": "pnpm",
+                "rejected": "npm"
+            }),
+        );
+        assert_eq!(feedback["packetCreated"], true);
+
+        let pending = call("brainmap_list_pending", serde_json::json!({}));
+        let packet_id = pending[0]["id"].as_str().unwrap();
+        let preview = call(
+            "brainmap_preview_update",
+            serde_json::json!({"packetId": packet_id}),
+        );
+        assert_eq!(preview[0]["id"], packet_id);
+        let applied = call(
+            "brainmap_apply_update",
+            serde_json::json!({"packetId": packet_id, "approved": true}),
+        );
+        assert_eq!(applied["applied"], true);
+
+        let changed = call("brainmap_decision_gate", gate_arguments);
+        assert_eq!(changed["selectedOption"], "pnpm");
+        assert_eq!(changed["ruleScope"], "project:codex-mcp");
+    }
+
+    drop(stdin);
+    let status = child.wait().expect("wait for MCP adapter");
+    assert!(status.success());
 }
 
 #[test]
@@ -449,12 +845,40 @@ fn concurrent_processes_preserve_ledgers_ids_capture_and_feedback() {
         .collect::<std::collections::HashSet<_>>();
     assert_eq!(capture_ids.len(), captures.len());
 
-    let pending = std::fs::read_dir(root.join("99-meta/pending-update-packets"))
+    let packet_dir = root.join("99-meta/pending-update-packets");
+    let pending = std::fs::read_dir(&packet_dir)
         .expect("read pending packets")
         .filter_map(Result::ok)
         .filter(|entry| entry.path().extension().and_then(|value| value.to_str()) == Some("json"))
         .count();
     assert_eq!(pending, 8);
+
+    ok(&["apply", "--pending", "--yes", "--vault", path(&root)]);
+    let applied = std::fs::read_dir(&packet_dir)
+        .expect("read applied packets")
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.ends_with(".applied.json"))
+        })
+        .map(|entry| {
+            serde_json::from_slice::<serde_json::Value>(
+                &std::fs::read(entry.path()).expect("read applied packet"),
+            )
+            .expect("parse applied packet")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(applied.len(), 8);
+    for packet in applied {
+        let packet_id = packet["id"].as_str().expect("applied packet id");
+        let note = root
+            .join("60-decision-examples")
+            .join(format!("{packet_id}.md"));
+        let body = std::fs::read_to_string(&note).expect("read applied canonical note");
+        assert!(body.contains("brainmap-decision-rule:v1"));
+    }
 }
 
 #[test]
@@ -737,4 +1161,35 @@ fn fails(args: &[&str], expected_stderr: &str) {
 
 fn path(path: &std::path::Path) -> &str {
     path.to_str().expect("test path is utf-8")
+}
+
+fn tree_snapshot(root: &std::path::Path) -> Vec<(String, Option<Vec<u8>>)> {
+    fn visit(
+        root: &std::path::Path,
+        directory: &std::path::Path,
+        entries: &mut Vec<(String, Option<Vec<u8>>)>,
+    ) {
+        for entry in std::fs::read_dir(directory).expect("read snapshot directory") {
+            let path = entry.expect("snapshot entry").path();
+            let relative = path
+                .strip_prefix(root)
+                .expect("snapshot path under root")
+                .to_string_lossy()
+                .replace('\\', "/");
+            if path.is_dir() {
+                entries.push((relative, None));
+                visit(root, &path, entries);
+            } else {
+                entries.push((
+                    relative,
+                    Some(std::fs::read(path).expect("read snapshot file")),
+                ));
+            }
+        }
+    }
+
+    let mut entries = Vec::new();
+    visit(root, root, &mut entries);
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    entries
 }

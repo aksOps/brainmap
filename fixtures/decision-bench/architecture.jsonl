@@ -1,2 +1,1 @@
-{"id":"bench_storage_v1","situation":"Choose storage for v1 personal decision engine","options":["Markdown+JSONL","SQLite","External Vector DB"],"risk":"low","reversible":true,"expectedOutcome":"proceed","expectedChoice":"Markdown+JSONL","mustAskUser":false,"reason":"User prefers local-first simple v1 systems"}
-
+{"id":"bench_storage_v1","situation":"Choose v1 storage","options":["Markdown+JSONL","SQLite","External Vector DB"],"risk":"low","reversible":true,"decisionType":"architecture","expectedOutcome":"proceed","expectedChoice":"Markdown+JSONL","mustAskUser":false,"reason":"The compiled seed policy prefers local-first simple v1 storage"}

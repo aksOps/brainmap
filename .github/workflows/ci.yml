@@ -29,4 +29,5 @@ jobs:
       - run: cargo install --locked cargo-audit cargo-deny cargo-cyclonedx
       - run: cargo audit
       - run: cargo deny check
-      - run: cargo cyclonedx --format json --override-filename brainmap
+      - run: scripts/generate-sbom.sh
+      - run: git diff --exit-code -- crates/brainmap-cli/brainmap.json

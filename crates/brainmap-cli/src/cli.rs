@@ -164,7 +164,7 @@ pub struct GateArgs {
     pub reversible: Option<bool>,
     #[arg(long, default_value = "general")]
     pub decision_type: String,
-    #[arg(long, default_value = "global")]
+    #[arg(long, default_value = "project:auto")]
     pub scope: String,
     #[arg(long)]
     pub agent_confidence: Option<f64>,
@@ -235,6 +235,16 @@ pub struct LearnFeedbackArgs {
     pub chosen: Option<String>,
     #[arg(long)]
     pub rejected: Option<String>,
+    #[arg(
+        long,
+        value_parser = [
+            "false-proceed",
+            "cross-domain-application",
+            "privacy-violation",
+            "hard-rule-violation"
+        ]
+    )]
+    pub incident: Option<String>,
     #[arg(long)]
     pub vault: Option<PathBuf>,
 }
@@ -253,7 +263,7 @@ pub struct LearnDecisionArgs {
     pub rationale: Option<String>,
     #[arg(long, default_value = "general")]
     pub decision_type: String,
-    #[arg(long, default_value = "global")]
+    #[arg(long, default_value = "project:auto")]
     pub scope: String,
     #[arg(long)]
     pub vault: Option<PathBuf>,

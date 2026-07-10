@@ -197,17 +197,6 @@ pub(crate) fn evaluate_internal(root: &Path, input: GateInput) -> Result<GateRes
         confidence = 0.58;
         matched.push("[[70-question-triggers/ask-when-uncertain.md]]".into());
         summary.push("Ambiguity detected.".into());
-    } else if local_first_storage(&lower, &options) {
-        selected = choose_local_first(&options);
-        outcome = "proceed".into();
-        confidence = 0.9;
-        risk_tier = "reversible_auto".into();
-        matched.push("[[30-tradeoff-models/local-first-vs-cloud.md]]".into());
-        recommendation = selected
-            .as_ref()
-            .map(|s| format!("Proceed with {s}; it matches local-first v1 policy."))
-            .unwrap_or_else(|| "Proceed with local Markdown/JSONL plus embedded SQLite.".into());
-        summary.push("Local-first v1 storage policy matched.".into());
     } else if input.intent == "would-ask-user" && lower.contains("redundant") {
         outcome = "no_action".into();
         recommendation = "Suppress redundant question.".into();
@@ -377,34 +366,6 @@ fn ambiguous(lower: &str, option_count: usize) -> bool {
         || (option_count == 0 && lower.len() < 24)
 }
 
-fn local_first_storage(lower: &str, options: &[String]) -> bool {
-    let has_storage_context = lower.contains("storage")
-        || lower.contains("v1")
-        || lower.contains("local")
-        || lower.contains("personal")
-        || lower.contains("brainmap");
-    let has_good_option = options.iter().any(|o| {
-        let o = o.to_lowercase();
-        o.contains("markdown") || o.contains("jsonl") || o.contains("sqlite")
-    });
-    let has_bad_option = options.iter().any(|o| {
-        let o = o.to_lowercase();
-        o.contains("external") || o.contains("cloud") || o.contains("vector db")
-    });
-    has_storage_context && has_good_option && has_bad_option
-}
-
-fn choose_local_first(options: &[String]) -> Option<String> {
-    options
-        .iter()
-        .find(|o| {
-            let o = o.to_lowercase();
-            o.contains("markdown") || o.contains("jsonl")
-        })
-        .or_else(|| options.iter().find(|o| o.to_lowercase().contains("sqlite")))
-        .cloned()
-}
-
 fn choose_learned_option(options: &[String], chosen: &str, rejected: &[String]) -> Option<String> {
     let chosen_lower = chosen.to_lowercase();
     options
@@ -486,6 +447,50 @@ mod tests {
         .unwrap();
         assert_eq!(res.outcome, "proceed");
         assert_eq!(res.selected_option.as_deref(), Some("Markdown+JSONL"));
+    }
+
+    #[test]
+    fn seed_storage_preference_is_a_retirable_compiled_markdown_policy() {
+        let (_tmp, root) = temp_vault();
+        let request = || GateInput {
+            intent: "would-ask-user".into(),
+            situation: "Choose v1 storage".into(),
+            options: vec![
+                "Markdown+JSONL".into(),
+                "SQLite".into(),
+                "External Vector DB".into(),
+            ],
+            proposed_action: String::new(),
+            risk: "low".into(),
+            reversible: Some(true),
+            decision_type: "architecture".into(),
+            scope: "global".into(),
+            agent_confidence: None,
+            dry_run: true,
+        };
+
+        let active = evaluate(&root, request()).unwrap();
+        assert_eq!(
+            active.rule_id.as_deref(),
+            Some("20-decision-frames-architecture-decisions")
+        );
+        assert_eq!(
+            active.applied_policies,
+            vec!["[[20-decision-frames/architecture-decisions.md]]"]
+        );
+
+        let policy = root.join("20-decision-frames/architecture-decisions.md");
+        let retired = fs::read_to_string(&policy)
+            .unwrap()
+            .replace("status: seed", "status: retired");
+        util::write_atomic(&policy, retired.as_bytes()).unwrap();
+        index::rebuild(&root).unwrap();
+
+        let inactive = evaluate(&root, request()).unwrap();
+        assert_eq!(inactive.outcome, "ask_user");
+        assert_eq!(inactive.selected_option, None);
+        assert!(inactive.rule_id.is_none());
+        assert!(inactive.applied_policies.is_empty());
     }
 
     #[test]
@@ -1052,9 +1057,30 @@ mod tests {
             vec!["[[20-decision-frames/package-manager-policy.md]]"]
         );
 
+        let prose_only = active.replace(
+            "# Package Manager Policy\n",
+            "# Package Manager Policy\n\nHuman context only; see [[30-tradeoff-models/simplicity-vs-power]].\n",
+        );
+        util::write_atomic(&path, prose_only.as_bytes()).unwrap();
+        index::rebuild(&root).unwrap();
+        let prose_result = evaluate(&root, request()).unwrap();
+        assert_eq!(prose_result.outcome, active_result.outcome);
+        assert_eq!(prose_result.selected_option, active_result.selected_option);
+        assert_eq!(prose_result.rule_id, active_result.rule_id);
+        assert_eq!(prose_result.match_score, active_result.match_score);
+        assert_eq!(
+            prose_result.applied_policies,
+            active_result.applied_policies
+        );
+        assert!(
+            fs::read_to_string(&path)
+                .unwrap()
+                .contains("[[30-tradeoff-models/simplicity-vs-power]]")
+        );
+
         util::write_atomic(
             &path,
-            active
+            prose_only
                 .replace("status: reliable", "status: retired")
                 .as_bytes(),
         )
@@ -1124,6 +1150,7 @@ mod tests {
             correction: None,
             chosen: Some("npm".into()),
             rejected: Some("pnpm".into()),
+            incident: None,
             vault: Some(root.clone()),
         })
         .unwrap();
@@ -1166,6 +1193,7 @@ mod tests {
             correction: Some("never rename automatically; always ask user".into()),
             chosen: None,
             rejected: None,
+            incident: None,
             vault: Some(root.clone()),
         })
         .unwrap();

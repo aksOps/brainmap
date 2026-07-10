@@ -1,6 +1,6 @@
 use crate::cli::EvalArgs;
 use crate::{gate, index, markdown, util, vault};
-use anyhow::Result;
+use anyhow::{Result, bail};
 use serde::Deserialize;
 use serde_json::json;
 use std::fs;
@@ -9,6 +9,8 @@ use std::path::PathBuf;
 #[derive(Debug, Deserialize)]
 struct Case {
     id: String,
+    #[serde(default)]
+    intent: Option<String>,
     situation: String,
     options: Vec<String>,
     risk: String,
@@ -32,6 +34,26 @@ struct Case {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum FixtureEntry {
+    Case(Case),
+    NegativeMatrix(NegativeCaseMatrix),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct NegativeCaseMatrix {
+    negative_matrix: bool,
+    id_prefix: String,
+    operations: Vec<String>,
+    contexts: Vec<String>,
+    scopes: Vec<String>,
+    options: Vec<String>,
+    decision_type: String,
+    source: EvalDecisionRule,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CaseSetup {
     gate_mode: Option<String>,
@@ -41,7 +63,7 @@ struct CaseSetup {
     learned_decisions: Vec<EvalDecisionRule>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct EvalDecisionRule {
     #[serde(default)]
     situation: Option<String>,
@@ -72,7 +94,12 @@ pub fn run(args: EvalArgs) -> Result<()> {
             .lines()
             .filter(|l| !l.trim().is_empty())
         {
-            cases.push(serde_json::from_str::<Case>(line)?);
+            match serde_json::from_str::<FixtureEntry>(line)? {
+                FixtureEntry::Case(case) => cases.push(case),
+                FixtureEntry::NegativeMatrix(matrix) => {
+                    cases.extend(expand_negative_matrix(matrix)?);
+                }
+            }
         }
     }
     let mut false_proceed = 0usize;
@@ -109,7 +136,10 @@ pub fn run(args: EvalArgs) -> Result<()> {
         let res = gate::evaluate(
             case_root,
             gate::GateInput {
-                intent: "would-ask-user".into(),
+                intent: case
+                    .intent
+                    .clone()
+                    .unwrap_or_else(|| "would-ask-user".into()),
                 situation: case.situation.clone(),
                 options: case.options.clone(),
                 proposed_action: case.proposed_action.clone().unwrap_or_default(),
@@ -164,35 +194,88 @@ pub fn run(args: EvalArgs) -> Result<()> {
             }
         }
     }
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json!({
-            "cases": cases.len(),
-            "falseProceed": false_proceed,
-            "falseAsk": false_ask,
-            "falseBlock": false_block,
-            "wrongChoice": wrong_choice,
-            "wrongRule": wrong_rule,
-            "learnedRuleRecall": {
-                "exact": ratio(exact_correct, exact_expected),
-                "exactCorrect": exact_correct,
-                "exactExpected": exact_expected,
-                "supportedParaphrase": ratio(paraphrase_correct, paraphrase_expected),
-                "paraphraseCorrect": paraphrase_correct,
-                "paraphraseExpected": paraphrase_expected,
-                "negativeSpecificity": ratio(negative_correct, negative_expected),
-                "negativeCorrect": negative_correct,
-                "negativeExpected": negative_expected
-            },
-            "confidenceCalibration": "match-derived-target",
-            "policyCoverage": "seed-policy",
-            "ambiguityDetection": true,
-            "expectedAskCases": expected_asks,
-            "caseIds": ids,
-            "reasons": reasons
-        }))?
-    );
+    let report = json!({
+        "cases": cases.len(),
+        "falseProceed": false_proceed,
+        "falseAsk": false_ask,
+        "falseBlock": false_block,
+        "wrongChoice": wrong_choice,
+        "wrongRule": wrong_rule,
+        "learnedRuleRecall": {
+            "exact": ratio(exact_correct, exact_expected),
+            "exactCorrect": exact_correct,
+            "exactExpected": exact_expected,
+            "supportedParaphrase": ratio(paraphrase_correct, paraphrase_expected),
+            "paraphraseCorrect": paraphrase_correct,
+            "paraphraseExpected": paraphrase_expected,
+            "negativeSpecificity": ratio(negative_correct, negative_expected),
+            "negativeCorrect": negative_correct,
+            "negativeExpected": negative_expected
+        },
+        "confidenceCalibration": "match-derived-target",
+        "policyCoverage": "seed-policy",
+        "ambiguityDetection": true,
+        "expectedAskCases": expected_asks,
+        "caseIds": ids,
+        "reasons": reasons
+    });
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    let failures = false_proceed + false_ask + false_block + wrong_choice + wrong_rule;
+    if failures > 0 {
+        bail!(
+            "evaluation contract failed with {failures} mismatched outcome, choice, or rule assertion(s)"
+        );
+    }
     Ok(())
+}
+
+fn expand_negative_matrix(matrix: NegativeCaseMatrix) -> Result<Vec<Case>> {
+    if !matrix.negative_matrix {
+        bail!("negativeMatrix must be true");
+    }
+    if matrix.operations.is_empty() || matrix.contexts.is_empty() || matrix.scopes.is_empty() {
+        bail!("negative matrix operations, contexts, and scopes must not be empty");
+    }
+    if matrix.options.len() < 2 {
+        bail!("negative matrix requires at least two request options");
+    }
+
+    let mut cases = Vec::new();
+    for (operation_index, operation) in matrix.operations.iter().enumerate() {
+        for (context_index, context) in matrix.contexts.iter().enumerate() {
+            for (scope_index, scope) in matrix.scopes.iter().enumerate() {
+                cases.push(Case {
+                    id: format!(
+                        "{}-{operation_index:02}-{context_index:02}-{scope_index:02}",
+                        matrix.id_prefix
+                    ),
+                    intent: Some("would-ask-user".into()),
+                    situation: format!("Choose a {operation} for a {context}"),
+                    options: matrix.options.clone(),
+                    risk: "low".into(),
+                    reversible: true,
+                    decision_type: Some(matrix.decision_type.clone()),
+                    scope: Some(scope.clone()),
+                    proposed_action: None,
+                    expected_outcome: "ask_user".into(),
+                    expected_choice: None,
+                    must_ask_user: Some(true),
+                    expected_learned_rule: Some(false),
+                    reason: Some(format!(
+                        "{} must not leak into {operation}/{context}/{scope}",
+                        matrix.source.chosen
+                    )),
+                    setup: Some(CaseSetup {
+                        gate_mode: None,
+                        autopilot_mode: None,
+                        threshold: None,
+                        learned_decisions: vec![matrix.source.clone()],
+                    }),
+                });
+            }
+        }
+    }
+    Ok(cases)
 }
 
 fn ratio(correct: usize, expected: usize) -> f64 {
