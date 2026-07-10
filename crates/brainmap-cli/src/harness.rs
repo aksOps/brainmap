@@ -35,6 +35,7 @@ struct GateRequest {
     reversible: Option<bool>,
     #[serde(rename = "decisionType")]
     decision_type: Option<String>,
+    scope: Option<String>,
     #[serde(rename = "agentConfidence")]
     agent_confidence: Option<f64>,
 }
@@ -58,6 +59,7 @@ pub fn stdio(args: StdioArgs) -> Result<()> {
                 risk: request.risk.unwrap_or_else(|| "medium".into()),
                 reversible: request.reversible,
                 decision_type: request.decision_type.unwrap_or_else(|| "general".into()),
+                scope: request.scope.unwrap_or_else(|| "global".into()),
                 agent_confidence: request.agent_confidence,
                 dry_run: false,
             },
@@ -160,6 +162,7 @@ fn hook_gate_input(host: &str, event: &str, payload: &str) -> gate::GateInput {
         risk: risk.into(),
         reversible: Some(reversible),
         decision_type: "agent-harness".into(),
+        scope: "global".into(),
         agent_confidence: Some(0.86),
         dry_run: true,
     }

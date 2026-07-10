@@ -25,6 +25,10 @@ pub struct Note {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DecisionRule {
     pub situation: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
     #[serde(default)]
     pub options: Vec<String>,
     pub chosen: String,
@@ -154,6 +158,8 @@ mod tests {
     fn decision_rule_marker_round_trips_structured_rule() {
         let rule = DecisionRule {
             situation: "publishing finished work: docs".into(),
+            decision_type: Some("workflow".into()),
+            scope: Some("global".into()),
             options: vec!["publish".into(), "ask user".into()],
             chosen: "ask user".into(),
             rejected: vec!["publish".into()],

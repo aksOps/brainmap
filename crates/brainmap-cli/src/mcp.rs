@@ -109,6 +109,7 @@ fn call_tool(root: &Path, name: &str, args: Value) -> Result<Value> {
                     risk: "medium".into(),
                     reversible: Some(true),
                     decision_type: "general".into(),
+                    scope: "global".into(),
                     agent_confidence: None,
                     dry_run: false,
                 },
@@ -173,6 +174,7 @@ fn gate_input(args: Value) -> Result<gate::GateInput> {
         risk: string_arg(&args, "risk").unwrap_or_else(|| "medium".into()),
         reversible: args.get("reversible").and_then(Value::as_bool),
         decision_type: string_arg(&args, "decisionType").unwrap_or_else(|| "general".into()),
+        scope: string_arg(&args, "scope").unwrap_or_else(|| "global".into()),
         agent_confidence: args.get("agentConfidence").and_then(Value::as_f64),
         dry_run: args.get("dryRun").and_then(Value::as_bool).unwrap_or(false),
     })

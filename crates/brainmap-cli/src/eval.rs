@@ -15,6 +15,8 @@ struct Case {
     reversible: bool,
     #[serde(default, rename = "decisionType")]
     decision_type: Option<String>,
+    #[serde(default)]
+    scope: Option<String>,
     #[serde(default, rename = "proposedAction")]
     proposed_action: Option<String>,
     #[serde(rename = "expectedOutcome")]
@@ -45,6 +47,10 @@ struct EvalDecisionRule {
     situation: Option<String>,
     #[serde(default)]
     options: Option<Vec<String>>,
+    #[serde(default, rename = "decisionType")]
+    decision_type: Option<String>,
+    #[serde(default)]
+    scope: Option<String>,
     chosen: String,
     #[serde(default)]
     rejected: Vec<String>,
@@ -107,6 +113,7 @@ pub fn run(args: EvalArgs) -> Result<()> {
                     .decision_type
                     .clone()
                     .unwrap_or_else(|| "general".into()),
+                scope: case.scope.clone().unwrap_or_else(|| "global".into()),
                 agent_confidence: None,
                 dry_run: true,
             },
@@ -168,6 +175,11 @@ fn prepare_case_vault(case: &Case, setup: &CaseSetup) -> Result<(tempfile::TempD
                 .clone()
                 .unwrap_or_else(|| case.situation.clone()),
             options: rule.options.clone().unwrap_or_else(|| case.options.clone()),
+            decision_type: rule
+                .decision_type
+                .clone()
+                .or_else(|| case.decision_type.clone()),
+            scope: rule.scope.clone().or_else(|| case.scope.clone()),
             chosen: rule.chosen.clone(),
             rejected: rule.rejected.clone(),
         })?;

@@ -311,6 +311,7 @@ fn restore_archive(file: &Path, to: &Path, identity: Option<&Path>) -> Result<()
             risk: "low".into(),
             reversible: Some(true),
             decision_type: "general".into(),
+            scope: "global".into(),
             agent_confidence: None,
             dry_run: true,
         },

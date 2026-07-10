@@ -75,18 +75,42 @@ pub fn rebuild(root: &Path) -> Result<()> {
             if let Some(rule) = markdown::parse_decision_rule(&note.body) {
                 let rule_path = note.path.to_string_lossy().to_string();
                 let situation_normalized = normalize_decision_text(&rule.situation);
+                let chosen_normalized = normalize_decision_text(&rule.chosen);
                 let priority = decision_rule_priority(&note.note_type);
+                let decision_type = rule
+                    .decision_type
+                    .as_deref()
+                    .or_else(|| note.frontmatter.get("decision_type").map(String::as_str))
+                    .unwrap_or("general");
+                let scope = rule
+                    .scope
+                    .as_deref()
+                    .or_else(|| note.frontmatter.get("scope").map(String::as_str))
+                    .unwrap_or("global");
+                let base_confidence = confidence_value(&note.confidence);
+                let evidence_count = note
+                    .frontmatter
+                    .get("evidence_count")
+                    .and_then(|value| value.parse::<i64>().ok())
+                    .unwrap_or(1);
                 tx.execute(
-                    "insert into decision_rules (path,situation,situation_normalized,options,chosen,rejected,kind,priority) values (?1,?2,?3,?4,?5,?6,?7,?8)",
+                    "insert into decision_rules (rule_id,path,situation,situation_normalized,decision_type,scope,options,chosen,chosen_normalized,rejected,kind,priority,base_confidence,evidence_count,status) values (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
                     params![
+                        note.id,
                         rule_path,
                         rule.situation,
                         situation_normalized,
+                        decision_type,
+                        scope,
                         serde_json::to_string(&rule.options)?,
                         rule.chosen,
+                        chosen_normalized,
                         serde_json::to_string(&rule.rejected)?,
                         note.note_type,
                         priority,
+                        base_confidence,
+                        evidence_count,
+                        note.status,
                     ],
                 )?;
                 for term in decision_tokens(&situation_normalized) {
@@ -110,7 +134,7 @@ pub fn rebuild(root: &Path) -> Result<()> {
             }
         }
         tx.execute(
-            "insert into index_manifest (key,value) values ('valid','true'),('createdAt',?1),('schemaVersion','decision-engine-v2')",
+            "insert into index_manifest (key,value) values ('valid','true'),('createdAt',?1),('schemaVersion','decision-engine-v3')",
             params![util::now_iso()],
         )?;
         tx.commit()?;
@@ -124,7 +148,7 @@ pub fn rebuild(root: &Path) -> Result<()> {
         serde_json::to_vec_pretty(&json!({
             "valid": true,
             "createdAt": util::now_iso(),
-            "schemaVersion": "decision-engine-v2",
+            "schemaVersion": "decision-engine-v3",
             "notes": notes.len()
         }))?
         .as_slice(),
@@ -137,7 +161,7 @@ fn create_schema(conn: &mut Connection) -> Result<()> {
         r#"
         pragma journal_mode = delete;
         create table schema_migrations (version integer primary key, applied_at text not null);
-        insert into schema_migrations (version, applied_at) values (2, datetime('now'));
+        insert into schema_migrations (version, applied_at) values (3, datetime('now'));
         create table notes (
             id text not null,
             path text primary key,
@@ -163,16 +187,23 @@ fn create_schema(conn: &mut Connection) -> Result<()> {
         create table decision_ledger (id text primary key, created_at text not null, payload text not null);
         create table update_packets (id text primary key, created_at text not null, status text not null, payload text not null);
         create table decision_rules (
+            rule_id text not null unique,
             path text primary key,
             situation text not null,
             situation_normalized text not null,
+            decision_type text not null,
+            scope text not null,
             options text not null,
             chosen text not null,
+            chosen_normalized text not null,
             rejected text not null,
             kind text not null,
-            priority integer not null
+            priority integer not null,
+            base_confidence real not null,
+            evidence_count integer not null,
+            status text not null
         );
-        create index decision_rules_situation_idx on decision_rules(situation_normalized,priority,path);
+        create index decision_rules_situation_idx on decision_rules(decision_type,scope,situation_normalized,priority,path);
         create table decision_rule_terms (
             term text not null,
             priority integer not null,
@@ -462,7 +493,12 @@ pub struct DecisionRuleMatch {
     pub priority: i64,
 }
 
-pub fn matching_decision_rule(root: &Path, situation: &str) -> Result<Option<DecisionRuleMatch>> {
+pub fn matching_decision_rule(
+    root: &Path,
+    situation: &str,
+    decision_type: &str,
+    scope: &str,
+) -> Result<Option<DecisionRuleMatch>> {
     let conn = connection(root)?;
     let compiled_tables: i64 = conn.query_row(
         "select count(*) from sqlite_master where type='table' and name in ('decision_rules','decision_rule_terms')",
@@ -478,8 +514,8 @@ pub fn matching_decision_rule(root: &Path, situation: &str) -> Result<Option<Dec
     }
     let exact = conn
         .query_row(
-            "select path,chosen,rejected,priority from decision_rules where situation_normalized=?1 order by priority desc,path desc limit 1",
-            params![normalized],
+            "select path,chosen,rejected,priority from decision_rules where situation_normalized=?1 and (decision_type=?2 or decision_type='general') and (scope=?3 or scope='global') and status not in ('retired','stale','contradicted') order by (scope=?3) desc,(decision_type=?2) desc,priority desc,path desc limit 1",
+            params![normalized, decision_type, scope],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -507,12 +543,12 @@ pub fn matching_decision_rule(root: &Path, situation: &str) -> Result<Option<Dec
         return Ok(None);
     }
     let mut stmt = conn.prepare(
-        "select r.path,r.situation,r.chosen,r.rejected,r.priority from decision_rule_terms t join decision_rules r on r.path=t.path where t.term=?1 order by t.priority desc,t.path desc limit 8",
+        "select r.path,r.situation,r.chosen,r.rejected,r.priority from decision_rule_terms t join decision_rules r on r.path=t.path where t.term=?1 and (r.decision_type=?2 or r.decision_type='general') and (r.scope=?3 or r.scope='global') and r.status not in ('retired','stale','contradicted') order by (r.scope=?3) desc,(r.decision_type=?2) desc,t.priority desc,t.path desc limit 8",
     )?;
     let mut best: Option<DecisionRuleMatch> = None;
     let mut seen_paths = HashSet::new();
     for term in terms {
-        let rows = stmt.query_map(params![term], |row| {
+        let rows = stmt.query_map(params![term, decision_type, scope], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -553,6 +589,14 @@ fn decision_rule_priority(kind: &str) -> i64 {
         "corrected-decision" => 300,
         "decision-policy" | "hard-constraint" | "approval-rule" => 200,
         _ => 100,
+    }
+}
+
+fn confidence_value(confidence: &str) -> f64 {
+    match confidence.to_ascii_lowercase().as_str() {
+        "high" | "very-strong" => 0.9,
+        "low" | "weak" => 0.55,
+        _ => 0.7,
     }
 }
 
@@ -642,6 +686,35 @@ mod tests {
             .unwrap();
 
         assert_eq!(tables, 2);
+
+        let columns = conn
+            .prepare("select name from pragma_table_info('decision_rules') order by cid")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        for required in [
+            "rule_id",
+            "decision_type",
+            "scope",
+            "chosen_normalized",
+            "base_confidence",
+            "evidence_count",
+            "status",
+        ] {
+            assert!(
+                columns.iter().any(|column| column == required),
+                "missing decision_rules.{required}: {columns:?}"
+            );
+        }
+
+        let version: i64 = conn
+            .query_row("select max(version) from schema_migrations", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(version, 3);
     }
 
     #[test]

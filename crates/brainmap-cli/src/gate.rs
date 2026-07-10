@@ -1,62 +1,11 @@
 use crate::cli::{DecideArgs, GateArgs, ShouldAskArgs};
+use crate::decision_engine::DecisionEngine;
 use crate::{index, learning, privacy, util, vault};
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::Path;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GateResponse {
-    #[serde(rename = "decisionId")]
-    pub decision_id: String,
-    pub outcome: String,
-    pub recommendation: String,
-    #[serde(rename = "selectedOption")]
-    pub selected_option: Option<String>,
-    #[serde(rename = "rejectedOptions")]
-    pub rejected_options: Vec<String>,
-    pub confidence: f64,
-    #[serde(rename = "riskTier")]
-    pub risk_tier: String,
-    #[serde(rename = "reasoningSummary")]
-    pub reasoning_summary: Vec<String>,
-    #[serde(rename = "matchedPolicies")]
-    pub matched_policies: Vec<String>,
-    #[serde(rename = "restrictionsApplied")]
-    pub restrictions_applied: Vec<String>,
-    #[serde(rename = "askUserQuestion")]
-    pub ask_user_question: Option<String>,
-    #[serde(rename = "defaultIfNoAnswer")]
-    pub default_if_no_answer: Option<String>,
-    #[serde(rename = "learningEvent")]
-    pub learning_event: serde_json::Value,
-}
-
-#[derive(Debug, Clone)]
-pub struct GateInput {
-    pub intent: String,
-    pub situation: String,
-    pub options: Vec<String>,
-    pub proposed_action: String,
-    pub risk: String,
-    pub reversible: Option<bool>,
-    pub decision_type: String,
-    pub agent_confidence: Option<f64>,
-    pub dry_run: bool,
-}
-
-impl GateInput {
-    fn combined(&self) -> String {
-        format!(
-            "{} {} {} {} {}",
-            self.intent,
-            self.situation,
-            self.options.join(" "),
-            self.proposed_action,
-            self.decision_type
-        )
-    }
-}
+pub use crate::decision_engine::{DecisionRequest as GateInput, DecisionResult as GateResponse};
 
 pub fn cmd_gate(args: GateArgs) -> Result<()> {
     let root = vault::resolve_vault(args.vault);
@@ -68,6 +17,7 @@ pub fn cmd_gate(args: GateArgs) -> Result<()> {
         risk: args.risk,
         reversible: args.reversible,
         decision_type: args.decision_type,
+        scope: args.scope,
         agent_confidence: args.agent_confidence,
         dry_run: args.dry_run,
     };
@@ -97,6 +47,7 @@ pub fn cmd_should_ask(args: ShouldAskArgs) -> Result<()> {
             risk: "medium".into(),
             reversible: Some(true),
             decision_type: "general".into(),
+            scope: "global".into(),
             agent_confidence: None,
             dry_run: false,
         },
@@ -128,6 +79,7 @@ pub fn cmd_decide(args: DecideArgs) -> Result<()> {
             risk: args.risk,
             reversible: args.reversible,
             decision_type: "general".into(),
+            scope: "global".into(),
             agent_confidence: None,
             dry_run: false,
         },
@@ -153,16 +105,18 @@ fn print_human(response: &GateResponse) {
 }
 
 pub fn evaluate(root: &Path, input: GateInput) -> Result<GateResponse> {
+    DecisionEngine::new(root).evaluate(input)
+}
+
+pub(crate) fn evaluate_internal(root: &Path, input: GateInput) -> Result<GateResponse> {
     let combined = privacy::redact(&input.combined());
     let lower = combined.to_lowercase();
     let decision_id = util::id("dec", &combined);
     let autopilot = learning::autopilot_config(root);
     let configured_gate_mode = learning::gate_mode_config(root);
     let threshold = autopilot.threshold;
-    let learned_rule = index::matching_decision_rule(
-        root,
-        &format!("{} {}", input.situation, input.proposed_action),
-    )?;
+    let learned_rule =
+        index::matching_decision_rule(root, &input.situation, &input.decision_type, &input.scope)?;
     let mut matched = index::policy_paths_for(root, &["local", "privacy", "approval", "question"])
         .unwrap_or_default();
     matched.truncate(6);
@@ -506,6 +460,7 @@ mod tests {
                 risk: "low".into(),
                 reversible: Some(true),
                 decision_type: "architecture".into(),
+                scope: "global".into(),
                 agent_confidence: None,
                 dry_run: true,
             },
@@ -528,6 +483,7 @@ mod tests {
                 risk: "low".into(),
                 reversible: Some(true),
                 decision_type: "privacy".into(),
+                scope: "global".into(),
                 agent_confidence: None,
                 dry_run: true,
             },
@@ -549,6 +505,7 @@ mod tests {
                 risk: "medium".into(),
                 reversible: Some(false),
                 decision_type: "general".into(),
+                scope: "global".into(),
                 agent_confidence: None,
                 dry_run: true,
             },
@@ -571,6 +528,7 @@ mod tests {
                 risk: "medium".into(),
                 reversible: Some(false),
                 decision_type: "workflow".into(),
+                scope: "global".into(),
                 agent_confidence: None,
                 dry_run: true,
             },
@@ -589,6 +547,8 @@ mod tests {
             chosen: "ask user".into(),
             rejected: Some("rename automatically".into()),
             rationale: Some("explicit user preference".into()),
+            decision_type: "workflow".into(),
+            scope: "global".into(),
             vault: Some(root.clone()),
         })
         .unwrap();
@@ -610,6 +570,7 @@ mod tests {
                 risk: "low".into(),
                 reversible: Some(true),
                 decision_type: "workflow".into(),
+                scope: "global".into(),
                 agent_confidence: None,
                 dry_run: true,
             },
@@ -629,6 +590,8 @@ mod tests {
             chosen: "a custom formatter".into(),
             rejected: Some("rustfmt".into()),
             rationale: Some("repository-specific formatting rules".into()),
+            decision_type: "general".into(),
+            scope: "global".into(),
             vault: Some(root.clone()),
         })
         .unwrap();
@@ -650,6 +613,7 @@ mod tests {
                 risk: "low".into(),
                 reversible: Some(true),
                 decision_type: "general".into(),
+                scope: "global".into(),
                 agent_confidence: None,
                 dry_run: true,
             },
@@ -673,6 +637,8 @@ mod tests {
             chosen: "a custom formatter".into(),
             rejected: Some("rustfmt".into()),
             rationale: Some("repository-specific formatting rules".into()),
+            decision_type: "general".into(),
+            scope: "global".into(),
             vault: Some(root.clone()),
         })
         .unwrap();
@@ -694,6 +660,7 @@ mod tests {
                 risk: "low".into(),
                 reversible: Some(true),
                 decision_type: "general".into(),
+                scope: "global".into(),
                 agent_confidence: None,
                 dry_run: true,
             },
@@ -702,6 +669,53 @@ mod tests {
 
         assert_eq!(res.outcome, "proceed");
         assert_eq!(res.selected_option.as_deref(), Some("a custom formatter"));
+    }
+
+    #[test]
+    fn project_scoped_rule_does_not_leak_to_another_project() {
+        let (_tmp, root) = temp_vault();
+        crate::learning::learn_decision(crate::cli::LearnDecisionArgs {
+            situation: "Choose formatter for a Rust repository".into(),
+            options: "rustfmt|a custom formatter".into(),
+            chosen: "a custom formatter".into(),
+            rejected: Some("rustfmt".into()),
+            rationale: Some("project alpha formatting rules".into()),
+            decision_type: "tooling".into(),
+            scope: "project:alpha".into(),
+            vault: Some(root.clone()),
+        })
+        .unwrap();
+        crate::learning::apply(crate::cli::ApplyArgs {
+            pending: false,
+            yes: true,
+            dry_run: false,
+            vault: Some(root.clone()),
+        })
+        .unwrap();
+
+        let res = evaluate(
+            &root,
+            GateInput {
+                intent: "plan".into(),
+                situation: "Choose formatter for a Rust repository".into(),
+                options: vec!["rustfmt".into(), "a custom formatter".into()],
+                proposed_action: String::new(),
+                risk: "low".into(),
+                reversible: Some(true),
+                decision_type: "tooling".into(),
+                scope: "project:beta".into(),
+                agent_confidence: None,
+                dry_run: true,
+            },
+        )
+        .unwrap();
+
+        assert!(
+            res.matched_policies
+                .iter()
+                .all(|policy| !policy.contains("60-decision-examples")),
+            "a project-scoped rule leaked across projects: {res:#?}"
+        );
     }
 
     #[test]
@@ -715,6 +729,7 @@ mod tests {
             risk: "low".into(),
             reversible: Some(true),
             decision_type: "workflow".into(),
+            scope: "global".into(),
             agent_confidence: None,
             dry_run: false,
         };
@@ -771,6 +786,7 @@ mod tests {
                 risk: "low".into(),
                 reversible: Some(true),
                 decision_type: "workflow".into(),
+                scope: "global".into(),
                 agent_confidence: None,
                 dry_run: true,
             },
@@ -795,6 +811,7 @@ mod tests {
                 risk: "low".into(),
                 reversible: Some(true),
                 decision_type: "workflow".into(),
+                scope: "global".into(),
                 agent_confidence: None,
                 dry_run: true,
             },
@@ -820,6 +837,7 @@ mod tests {
                 risk: "low".into(),
                 reversible: Some(true),
                 decision_type: "workflow".into(),
+                scope: "global".into(),
                 agent_confidence: None,
                 dry_run: true,
             },

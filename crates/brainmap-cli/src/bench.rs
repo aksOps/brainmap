@@ -38,6 +38,7 @@ pub fn run(args: BenchArgs) -> Result<()> {
             risk: "low".into(),
             reversible: Some(true),
             decision_type: "architecture".into(),
+            scope: "global".into(),
             agent_confidence: None,
             dry_run: true,
         },

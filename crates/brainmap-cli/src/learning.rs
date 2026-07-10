@@ -447,6 +447,8 @@ pub fn learn_feedback(args: LearnFeedbackArgs) -> Result<()> {
     let (chosen, rejected) = normalize_feedback_rule(&redacted);
     packet.decision_rule = Some(markdown::DecisionRule {
         situation,
+        decision_type: None,
+        scope: None,
         options: Vec::new(),
         chosen,
         rejected,
@@ -486,6 +488,8 @@ pub fn learn_decision(args: LearnDecisionArgs) -> Result<()> {
     }
     packet.decision_rule = Some(markdown::DecisionRule {
         situation: privacy::redact(&args.situation),
+        decision_type: Some(privacy::redact(&args.decision_type)),
+        scope: Some(privacy::redact(&args.scope)),
         options: args
             .options
             .split('|')
@@ -1566,6 +1570,8 @@ mod tests {
             chosen: "ask user".into(),
             rejected: Some("publish".into()),
             rationale: None,
+            decision_type: "workflow".into(),
+            scope: "global".into(),
             vault: Some(root.clone()),
         })
         .unwrap();

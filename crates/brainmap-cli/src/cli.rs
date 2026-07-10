@@ -129,6 +129,8 @@ pub struct GateArgs {
     pub reversible: Option<bool>,
     #[arg(long, default_value = "general")]
     pub decision_type: String,
+    #[arg(long, default_value = "global")]
+    pub scope: String,
     #[arg(long)]
     pub agent_confidence: Option<f64>,
     #[arg(long)]
@@ -210,6 +212,10 @@ pub struct LearnDecisionArgs {
     pub rejected: Option<String>,
     #[arg(long)]
     pub rationale: Option<String>,
+    #[arg(long, default_value = "general")]
+    pub decision_type: String,
+    #[arg(long, default_value = "global")]
+    pub scope: String,
     #[arg(long)]
     pub vault: Option<PathBuf>,
 }
