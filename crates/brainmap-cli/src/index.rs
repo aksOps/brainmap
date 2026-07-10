@@ -486,19 +486,54 @@ pub fn policy_paths_for(root: &Path, words: &[&str]) -> Result<Vec<String>> {
 
 #[derive(Debug, Clone)]
 pub struct DecisionRuleMatch {
+    pub rule_id: String,
     pub path: String,
     pub chosen: String,
     pub rejected: Vec<String>,
     pub score: f64,
     pub priority: i64,
+    pub scope: String,
+    pub base_confidence: f64,
+    pub evidence_count: i64,
+    pub match_kind: &'static str,
 }
 
-pub fn matching_decision_rule(
+impl DecisionRuleMatch {
+    pub fn calibrated_confidence(&self) -> f64 {
+        let exact_bonus = if self.match_kind == "exact" {
+            0.05
+        } else {
+            0.0
+        };
+        let evidence_bonus = (self.evidence_count.clamp(1, 4) as f64) * 0.01;
+        let correction_bonus = if self.priority >= 300 { 0.02 } else { 0.0 };
+        (0.4 + self.score * 0.45
+            + self.base_confidence * 0.08
+            + exact_bonus
+            + evidence_bonus
+            + correction_bonus)
+            .min(0.97)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum DecisionRuleResolution {
+    NoMatch,
+    Applicable(DecisionRuleMatch),
+    Ambiguous {
+        best: DecisionRuleMatch,
+        alternative: DecisionRuleMatch,
+    },
+    OptionMismatch(DecisionRuleMatch),
+}
+
+pub fn resolve_decision_rule(
     root: &Path,
     situation: &str,
     decision_type: &str,
     scope: &str,
-) -> Result<Option<DecisionRuleMatch>> {
+    options: &[String],
+) -> Result<DecisionRuleResolution> {
     let conn = connection(root)?;
     let compiled_tables: i64 = conn.query_row(
         "select count(*) from sqlite_master where type='table' and name in ('decision_rules','decision_rule_terms')",
@@ -506,46 +541,66 @@ pub fn matching_decision_rule(
         |row| row.get(0),
     )?;
     if compiled_tables != 2 {
-        return Ok(None);
+        return Ok(DecisionRuleResolution::NoMatch);
     }
     let normalized = normalize_decision_text(situation);
     if normalized.is_empty() {
-        return Ok(None);
+        return Ok(DecisionRuleResolution::NoMatch);
     }
-    let exact = conn
-        .query_row(
-            "select path,chosen,rejected,priority from decision_rules where situation_normalized=?1 and (decision_type=?2 or decision_type='general') and (scope=?3 or scope='global') and status not in ('retired','stale','contradicted') order by (scope=?3) desc,(decision_type=?2) desc,priority desc,path desc limit 1",
-            params![normalized, decision_type, scope],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, i64>(3)?,
-                ))
-            },
-        )
-        .optional()?;
-    if let Some((path, chosen, rejected, priority)) = exact {
-        return Ok(Some(DecisionRuleMatch {
+
+    let mut candidates = Vec::new();
+    let mut exact_stmt = conn.prepare(
+        "select rule_id,path,chosen,rejected,priority,scope,base_confidence,evidence_count from decision_rules where situation_normalized=?1 and (decision_type=?2 or decision_type='general') and (scope=?3 or scope='global') and status not in ('retired','stale','contradicted') order by (scope=?3) desc,(decision_type=?2) desc,priority desc,path desc limit 8",
+    )?;
+    let exact_rows = exact_stmt.query_map(params![normalized, decision_type, scope], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, i64>(4)?,
+            row.get::<_, String>(5)?,
+            row.get::<_, f64>(6)?,
+            row.get::<_, i64>(7)?,
+        ))
+    })?;
+    for row in exact_rows {
+        let (
+            rule_id,
+            path,
+            chosen,
+            rejected,
+            priority,
+            rule_scope,
+            base_confidence,
+            evidence_count,
+        ) = row?;
+        candidates.push(DecisionRuleMatch {
+            rule_id,
             path,
             chosen,
             rejected: serde_json::from_str(&rejected)?,
             score: 1.0,
             priority,
-        }));
+            scope: rule_scope,
+            base_confidence,
+            evidence_count,
+            match_kind: "exact",
+        });
+    }
+    if !candidates.is_empty() {
+        return Ok(resolve_candidates(candidates, scope, options));
     }
 
     let mut terms = decision_tokens(&normalized).into_iter().collect::<Vec<_>>();
     terms.sort();
     terms.truncate(16);
     if terms.is_empty() {
-        return Ok(None);
+        return Ok(DecisionRuleResolution::NoMatch);
     }
     let mut stmt = conn.prepare(
-        "select r.path,r.situation,r.chosen,r.rejected,r.priority from decision_rule_terms t join decision_rules r on r.path=t.path where t.term=?1 and (r.decision_type=?2 or r.decision_type='general') and (r.scope=?3 or r.scope='global') and r.status not in ('retired','stale','contradicted') order by (r.scope=?3) desc,(r.decision_type=?2) desc,t.priority desc,t.path desc limit 8",
+        "select r.rule_id,r.path,r.situation,r.chosen,r.rejected,r.priority,r.scope,r.base_confidence,r.evidence_count from decision_rule_terms t join decision_rules r on r.path=t.path where t.term=?1 and (r.decision_type=?2 or r.decision_type='general') and (r.scope=?3 or r.scope='global') and r.status not in ('retired','stale','contradicted') order by (r.scope=?3) desc,(r.decision_type=?2) desc,t.priority desc,t.path desc limit 8",
     )?;
-    let mut best: Option<DecisionRuleMatch> = None;
     let mut seen_paths = HashSet::new();
     for term in terms {
         let rows = stmt.query_map(params![term, decision_type, scope], |row| {
@@ -554,34 +609,92 @@ pub fn matching_decision_rule(
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
-                row.get::<_, i64>(4)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, f64>(7)?,
+                row.get::<_, i64>(8)?,
             ))
         })?;
         for row in rows {
-            let (path, rule_situation, chosen, rejected, priority) = row?;
+            let (
+                rule_id,
+                path,
+                rule_situation,
+                chosen,
+                rejected,
+                priority,
+                rule_scope,
+                base_confidence,
+                evidence_count,
+            ) = row?;
             if !seen_paths.insert(path.clone()) {
                 continue;
             }
             let Some(score) = decision_rule_score(&rule_situation, situation) else {
                 continue;
             };
-            let candidate = DecisionRuleMatch {
+            candidates.push(DecisionRuleMatch {
+                rule_id,
                 path,
                 chosen,
                 rejected: serde_json::from_str(&rejected)?,
                 score,
                 priority,
-            };
-            let replace = best.as_ref().is_none_or(|current| {
-                (candidate.priority, candidate.score, &candidate.path)
-                    > (current.priority, current.score, &current.path)
+                scope: rule_scope,
+                base_confidence,
+                evidence_count,
+                match_kind: "fuzzy",
             });
-            if replace {
-                best = Some(candidate);
-            }
         }
     }
-    Ok(best)
+    Ok(resolve_candidates(candidates, scope, options))
+}
+
+fn resolve_candidates(
+    mut candidates: Vec<DecisionRuleMatch>,
+    request_scope: &str,
+    options: &[String],
+) -> DecisionRuleResolution {
+    if candidates.is_empty() {
+        return DecisionRuleResolution::NoMatch;
+    }
+    candidates.sort_by(|left, right| {
+        right
+            .score
+            .total_cmp(&left.score)
+            .then_with(|| (right.scope == request_scope).cmp(&(left.scope == request_scope)))
+            .then_with(|| right.priority.cmp(&left.priority))
+            .then_with(|| right.path.cmp(&left.path))
+    });
+
+    let best = candidates.remove(0);
+    if let Some(alternative) = candidates.first()
+        && (best.score - alternative.score).abs() < 0.1
+        && best.priority == alternative.priority
+        && (best.scope == request_scope) == (alternative.scope == request_scope)
+        && normalize_decision_text(&best.chosen) != normalize_decision_text(&alternative.chosen)
+    {
+        return DecisionRuleResolution::Ambiguous {
+            best,
+            alternative: alternative.clone(),
+        };
+    }
+
+    if choice_is_available(options, &best.chosen) {
+        DecisionRuleResolution::Applicable(best)
+    } else if best.match_kind == "exact" || best.score >= 0.9 {
+        DecisionRuleResolution::OptionMismatch(best)
+    } else {
+        DecisionRuleResolution::NoMatch
+    }
+}
+
+fn choice_is_available(options: &[String], chosen: &str) -> bool {
+    let chosen = normalize_decision_text(chosen);
+    options
+        .iter()
+        .any(|option| normalize_decision_text(option) == chosen)
 }
 
 fn decision_rule_priority(kind: &str) -> i64 {

@@ -115,8 +115,13 @@ pub(crate) fn evaluate_internal(root: &Path, input: GateInput) -> Result<GateRes
     let autopilot = learning::autopilot_config(root);
     let configured_gate_mode = learning::gate_mode_config(root);
     let threshold = autopilot.threshold;
-    let learned_rule =
-        index::matching_decision_rule(root, &input.situation, &input.decision_type, &input.scope)?;
+    let learned_resolution = index::resolve_decision_rule(
+        root,
+        &input.situation,
+        &input.decision_type,
+        &input.scope,
+        &input.options,
+    )?;
     let mut matched = index::policy_paths_for(root, &["local", "privacy", "approval", "question"])
         .unwrap_or_default();
     matched.truncate(6);
@@ -125,6 +130,10 @@ pub(crate) fn evaluate_internal(root: &Path, input: GateInput) -> Result<GateRes
     let mut recommendation = "Ask a focused question before proceeding.".to_string();
     let mut selected = None;
     let mut confidence = input.agent_confidence.unwrap_or(0.56).clamp(0.0, 1.0);
+    let mut rule_id = None;
+    let mut rule_scope = None;
+    let mut match_score = None;
+    let mut match_kind = None;
     let mut risk_tier = "ask_before_action".to_string();
     let mut summary = vec!["Applied deterministic policy precedence.".to_string()];
     let mut learned_question = None;
@@ -169,13 +178,17 @@ pub(crate) fn evaluate_internal(root: &Path, input: GateInput) -> Result<GateRes
         risk_tier = "approval_required".into();
         restrictions.push("[[40-restrictions/approval-required.md]]".into());
         summary.push("Irreversible/high-risk action requires approval.".into());
-    } else if let Some(rule) = &learned_rule {
+    } else if let index::DecisionRuleResolution::Applicable(rule) = &learned_resolution {
         let rule_link = format!("[[{}]]", rule.path);
         if !matched.contains(&rule_link) {
             matched.insert(0, rule_link);
         }
         selected = choose_learned_option(&options, &rule.chosen, &rule.rejected);
-        confidence = if rule.priority >= 300 { 0.97 } else { 0.92 };
+        confidence = rule.calibrated_confidence();
+        rule_id = Some(rule.rule_id.clone());
+        rule_scope = Some(rule.scope.clone());
+        match_score = Some(rule.score);
+        match_kind = Some(rule.match_kind.into());
         if learned_rule_requires_ask(&rule.chosen) {
             outcome = "ask_user".into();
             recommendation = format!("Follow the learned preference to {}.", rule.chosen);
@@ -203,6 +216,46 @@ pub(crate) fn evaluate_internal(root: &Path, input: GateInput) -> Result<GateRes
             "Applied compiled learned decision rule with score {:.2}.",
             rule.score
         ));
+    } else if let index::DecisionRuleResolution::OptionMismatch(rule) = &learned_resolution {
+        let rule_link = format!("[[{}]]", rule.path);
+        if !matched.contains(&rule_link) {
+            matched.insert(0, rule_link);
+        }
+        confidence = rule.calibrated_confidence();
+        rule_id = Some(rule.rule_id.clone());
+        rule_scope = Some(rule.scope.clone());
+        match_score = Some(rule.score);
+        match_kind = Some(rule.match_kind.into());
+        outcome = "ask_user".into();
+        recommendation = format!(
+            "The learned choice '{}' is not among the current options.",
+            rule.chosen
+        );
+        learned_question = Some(format!(
+            "The available options changed. Which current option should replace '{}'?",
+            rule.chosen
+        ));
+        summary.push(format!(
+            "An applicable {} learned rule scored {:.2}, but its choice is unavailable.",
+            rule.match_kind, rule.score
+        ));
+    } else if let index::DecisionRuleResolution::Ambiguous { best, alternative } =
+        &learned_resolution
+    {
+        confidence = best.calibrated_confidence().min(0.65);
+        rule_scope = Some(best.scope.clone());
+        match_score = Some(best.score);
+        match_kind = Some("ambiguous".into());
+        outcome = "ask_user".into();
+        recommendation = "Conflicting learned decisions are equally relevant.".into();
+        learned_question = Some(format!(
+            "Should I choose '{}' or '{}' for this situation?",
+            best.chosen, alternative.chosen
+        ));
+        summary.push(format!(
+            "Learned rule conflict: {} and {} both scored {:.2}.",
+            best.rule_id, alternative.rule_id, best.score
+        ));
     } else if ambiguous(&lower, options.len()) {
         outcome = "ask_user".into();
         recommendation = "Ask one narrower question; current context is ambiguous.".into();
@@ -225,20 +278,20 @@ pub(crate) fn evaluate_internal(root: &Path, input: GateInput) -> Result<GateRes
         risk_tier = "suggest_only".into();
         summary.push("Question appears redundant.".into());
     } else if input.risk.eq_ignore_ascii_case("low") && reversible {
-        selected = options.first().cloned();
-        outcome = "proceed".into();
-        confidence = confidence.max(0.84);
-        risk_tier = "reversible_auto".into();
-        recommendation = selected
-            .as_ref()
-            .map(|s| format!("Proceed with {s}; low-risk reversible action."))
-            .unwrap_or_else(|| "Proceed; low-risk reversible action.".into());
-        summary.push("Low-risk reversible action cleared threshold.".into());
+        outcome = "ask_user".into();
+        recommendation =
+            "No learned or executable policy selects among the current options.".into();
+        summary.push(
+            "Option order is non-authoritative; the confidence threshold cannot select a default."
+                .into(),
+        );
     } else if confidence >= threshold && reversible {
-        outcome = "proceed".into();
-        selected = options.first().cloned();
-        recommendation = "Proceed; confidence meets threshold and no restriction matched.".into();
-        summary.push("Confidence exceeded threshold.".into());
+        outcome = "ask_user".into();
+        recommendation =
+            "Confidence alone cannot select an option without an applicable policy.".into();
+        summary.push(
+            "Confidence exceeded threshold, but no executable policy selected an option.".into(),
+        );
     }
 
     if outcome == "proceed" && confidence < threshold {
@@ -292,6 +345,10 @@ pub(crate) fn evaluate_internal(root: &Path, input: GateInput) -> Result<GateRes
         selected_option: selected,
         rejected_options: rejected,
         confidence,
+        rule_id,
+        rule_scope,
+        match_score,
+        match_kind,
         risk_tier,
         reasoning_summary: summary,
         matched_policies: matched,
@@ -468,6 +525,30 @@ mod tests {
         .unwrap();
         assert_eq!(res.outcome, "proceed");
         assert_eq!(res.selected_option.as_deref(), Some("Markdown+JSONL"));
+    }
+
+    #[test]
+    fn unlearned_low_risk_decision_does_not_select_the_first_option() {
+        let (_tmp, root) = temp_vault();
+        let res = evaluate(
+            &root,
+            GateInput {
+                intent: "would-ask-user".into(),
+                situation: "Choose a package manager for a new JavaScript project".into(),
+                options: vec!["npm".into(), "pnpm".into()],
+                proposed_action: String::new(),
+                risk: "low".into(),
+                reversible: Some(true),
+                decision_type: "tooling".into(),
+                scope: "project:example".into(),
+                agent_confidence: Some(0.9),
+                dry_run: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(res.outcome, "ask_user");
+        assert_eq!(res.selected_option, None);
     }
 
     #[test]
@@ -672,6 +753,114 @@ mod tests {
     }
 
     #[test]
+    fn fuzzy_learned_result_exposes_match_evidence_and_calibrated_confidence() {
+        let (_tmp, root) = temp_vault();
+        crate::learning::learn_decision(crate::cli::LearnDecisionArgs {
+            situation: "Choose formatter for a Rust repository".into(),
+            options: "rustfmt|a custom formatter".into(),
+            chosen: "a custom formatter".into(),
+            rejected: Some("rustfmt".into()),
+            rationale: Some("project formatting rules".into()),
+            decision_type: "tooling".into(),
+            scope: "project:alpha".into(),
+            vault: Some(root.clone()),
+        })
+        .unwrap();
+        crate::learning::apply(crate::cli::ApplyArgs {
+            pending: false,
+            yes: true,
+            dry_run: false,
+            vault: Some(root.clone()),
+        })
+        .unwrap();
+
+        let res = evaluate(
+            &root,
+            GateInput {
+                intent: "plan".into(),
+                situation: "Choose primary formatter for a Rust repository".into(),
+                options: vec!["rustfmt".into(), "a custom formatter".into()],
+                proposed_action: String::new(),
+                risk: "low".into(),
+                reversible: Some(true),
+                decision_type: "tooling".into(),
+                scope: "project:alpha".into(),
+                agent_confidence: None,
+                dry_run: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(res.match_kind.as_deref(), Some("fuzzy"));
+        assert_eq!(res.match_score, Some(0.8));
+        assert_eq!(res.rule_scope.as_deref(), Some("project:alpha"));
+        assert!(res.rule_id.is_some());
+        assert!(res.confidence < 0.9, "{res:#?}");
+    }
+
+    #[test]
+    fn equally_relevant_conflicting_rules_return_ambiguity() {
+        let (_tmp, root) = temp_vault();
+        for (situation, chosen, rejected) in [
+            (
+                "Choose primary formatter for a Rust repository",
+                "rustfmt",
+                "a custom formatter",
+            ),
+            (
+                "Choose preferred formatter for a Rust repository",
+                "a custom formatter",
+                "rustfmt",
+            ),
+        ] {
+            crate::learning::learn_decision(crate::cli::LearnDecisionArgs {
+                situation: situation.into(),
+                options: "rustfmt|a custom formatter".into(),
+                chosen: chosen.into(),
+                rejected: Some(rejected.into()),
+                rationale: Some("conflicting learned evidence".into()),
+                decision_type: "tooling".into(),
+                scope: "project:alpha".into(),
+                vault: Some(root.clone()),
+            })
+            .unwrap();
+        }
+        crate::learning::apply(crate::cli::ApplyArgs {
+            pending: false,
+            yes: true,
+            dry_run: false,
+            vault: Some(root.clone()),
+        })
+        .unwrap();
+
+        let res = evaluate(
+            &root,
+            GateInput {
+                intent: "plan".into(),
+                situation: "Choose formatter for a Rust repository".into(),
+                options: vec!["rustfmt".into(), "a custom formatter".into()],
+                proposed_action: String::new(),
+                risk: "low".into(),
+                reversible: Some(true),
+                decision_type: "tooling".into(),
+                scope: "project:alpha".into(),
+                agent_confidence: None,
+                dry_run: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(res.outcome, "ask_user");
+        assert_eq!(res.selected_option, None);
+        assert_eq!(res.match_kind.as_deref(), Some("ambiguous"));
+        assert!(
+            res.reasoning_summary
+                .iter()
+                .any(|line| line.contains("conflict"))
+        );
+    }
+
+    #[test]
     fn project_scoped_rule_does_not_leak_to_another_project() {
         let (_tmp, root) = temp_vault();
         crate::learning::learn_decision(crate::cli::LearnDecisionArgs {
@@ -716,6 +905,84 @@ mod tests {
                 .all(|policy| !policy.contains("60-decision-examples")),
             "a project-scoped rule leaked across projects: {res:#?}"
         );
+    }
+
+    #[test]
+    fn hundred_nearby_decisions_do_not_apply_a_formatter_rule() {
+        let (_tmp, root) = temp_vault();
+        crate::learning::learn_decision(crate::cli::LearnDecisionArgs {
+            situation: "Choose formatter for a Rust repository".into(),
+            options: "rustfmt|a custom formatter".into(),
+            chosen: "a custom formatter".into(),
+            rejected: Some("rustfmt".into()),
+            rationale: Some("project formatting rules".into()),
+            decision_type: "tooling".into(),
+            scope: "project:alpha".into(),
+            vault: Some(root.clone()),
+        })
+        .unwrap();
+        crate::learning::apply(crate::cli::ApplyArgs {
+            pending: false,
+            yes: true,
+            dry_run: false,
+            vault: Some(root.clone()),
+        })
+        .unwrap();
+
+        let operations = [
+            "database",
+            "logging library",
+            "package manager",
+            "test runner",
+            "build system",
+            "linter",
+            "deployment target",
+            "cache",
+            "message queue",
+            "serializer",
+        ];
+        let contexts = [
+            "Rust repository",
+            "Python repository",
+            "JavaScript repository",
+            "Go repository",
+            "Java repository",
+            "mobile application",
+            "web application",
+            "command line project",
+            "backend project",
+            "frontend project",
+        ];
+
+        let mut evaluated = 0usize;
+        for operation in operations {
+            for context in contexts {
+                let res = evaluate(
+                    &root,
+                    GateInput {
+                        intent: "plan".into(),
+                        situation: format!("Choose a {operation} for a {context}"),
+                        options: vec!["option A".into(), "option B".into()],
+                        proposed_action: String::new(),
+                        risk: "low".into(),
+                        reversible: Some(true),
+                        decision_type: "tooling".into(),
+                        scope: "project:alpha".into(),
+                        agent_confidence: None,
+                        dry_run: true,
+                    },
+                )
+                .unwrap();
+                assert!(
+                    res.rule_id.is_none(),
+                    "formatter rule leaked into {operation}/{context}: {res:#?}"
+                );
+                assert_eq!(res.outcome, "ask_user");
+                assert_eq!(res.selected_option, None);
+                evaluated += 1;
+            }
+        }
+        assert_eq!(evaluated, 100);
     }
 
     #[test]

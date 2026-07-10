@@ -13,6 +13,14 @@ pub struct DecisionResult {
     #[serde(rename = "rejectedOptions")]
     pub rejected_options: Vec<String>,
     pub confidence: f64,
+    #[serde(rename = "ruleId", skip_serializing_if = "Option::is_none")]
+    pub rule_id: Option<String>,
+    #[serde(rename = "ruleScope", skip_serializing_if = "Option::is_none")]
+    pub rule_scope: Option<String>,
+    #[serde(rename = "matchScore", skip_serializing_if = "Option::is_none")]
+    pub match_score: Option<f64>,
+    #[serde(rename = "matchKind", skip_serializing_if = "Option::is_none")]
+    pub match_kind: Option<String>,
     #[serde(rename = "riskTier")]
     pub risk_tier: String,
     #[serde(rename = "reasoningSummary")]
