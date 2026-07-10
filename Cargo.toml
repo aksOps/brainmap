@@ -1,3 +1,10 @@
 [workspace]
 members = ["crates/brainmap-cli"]
+exclude = ["vendor/i18n-embed-fl"]
 resolver = "3"
+
+[patch.crates-io]
+# age 0.11.x depends on i18n-embed-fl 0.9.x. The published 0.9.4
+# procedural macro emits named arguments by randomized HashMap order; this
+# vendored patch applies the ordering fix released upstream in 0.10.0.
+i18n-embed-fl = { path = "vendor/i18n-embed-fl" }

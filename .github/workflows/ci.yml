@@ -29,6 +29,7 @@ jobs:
       - run: cargo install --locked --version 0.22.2 cargo-audit
       - run: cargo install --locked --version 0.20.2 cargo-deny
       - run: cargo install --locked --version 0.5.9 cargo-cyclonedx
+      - run: scripts/test-vendored-i18n.sh
       - run: cargo audit
       - run: cargo deny check
       - run: scripts/generate-sbom.sh

@@ -40,14 +40,16 @@ jobs:
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - name: Test
         run: cargo test --locked --workspace --all-targets --all-features
+      - name: Test vendored reproducibility patch
+        run: scripts/test-vendored-i18n.sh
       - name: Audit
         run: cargo audit
       - name: Dependency policy
         run: cargo deny check
       - name: Package cargo crate
         run: cargo package --locked -p brainmap-cli
-      - name: Build optimized release binaries
-        run: cargo build --release --locked --bin brainmap --bin brainmapd
+      - name: Build and verify optimized release binaries
+        run: scripts/verify-release-reproducibility.sh
       - name: Generate release SBOM
         run: |
           scripts/generate-sbom.sh
