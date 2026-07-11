@@ -1291,7 +1291,7 @@ query_brainmap_calls() {
       | select($calls[2].arguments == {
           decisionId: $first.decisionId,
           chosen: "prettier",
-          rejected: "biome"
+          rejected: ["biome"]
         })
       | select(
           $feedback.packetCreated == true
@@ -1302,6 +1302,8 @@ query_brainmap_calls() {
           ($preview | type) == "array"
           and ($preview | length) == 1
           and $preview[0].id == $feedback.packetId
+          and $preview[0].decisionRule.chosen == "prettier"
+          and $preview[0].decisionRule.rejected == ["biome"]
         )
       | select($calls[4].arguments == {packetId: $feedback.packetId, approved: true})
       | select($applied == {applied: true, packetId: $feedback.packetId})

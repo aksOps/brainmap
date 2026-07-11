@@ -1208,7 +1208,7 @@ fn codex_mcp_adapter_completes_the_learning_lifecycle() {
         let gate_arguments = serde_json::json!({
             "intent": "would-ask-user",
             "situation": "Choose package manager through Codex MCP",
-            "options": ["npm", "pnpm"],
+            "options": ["npm|legacy", "pnpm"],
             "risk": "low",
             "reversible": true,
             "decisionType": "tooling",
@@ -1232,7 +1232,7 @@ fn codex_mcp_adapter_completes_the_learning_lifecycle() {
             serde_json::json!({
                 "decisionId": decision_id,
                 "chosen": "pnpm",
-                "rejected": "npm"
+                "rejected": ["npm|legacy"]
             }),
         );
         assert_eq!(feedback["packetCreated"], true);
@@ -1244,6 +1244,10 @@ fn codex_mcp_adapter_completes_the_learning_lifecycle() {
             serde_json::json!({"packetId": packet_id}),
         );
         assert_eq!(preview[0]["id"], packet_id);
+        assert_eq!(
+            preview[0]["decisionRule"]["rejected"],
+            serde_json::json!(["npm|legacy"])
+        );
         let applied = call(
             "brainmap_apply_update",
             serde_json::json!({"packetId": packet_id, "approved": true}),
