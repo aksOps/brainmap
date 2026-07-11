@@ -1505,7 +1505,10 @@ fn validate_runner(
 fn validate_runner_commands(inventory: &Inventory) -> Result<()> {
     let commands: Vec<RunnerCommand> = read_json(inventory, "runner/commands.json")?;
     ensure!(!commands.is_empty(), "runner command evidence is empty");
-    let allowed = BTreeSet::from(["FIA-1", "FIA-2", "FIA-3", "FIA-4", "FIA-6", "FIA-7"]);
+    let required = BTreeSet::from(["FIA-1", "FIA-2", "FIA-3", "FIA-4", "FIA-6", "FIA-7"]);
+    let allowed = BTreeSet::from([
+        "PRECHECK", "FIA-1", "FIA-2", "FIA-3", "FIA-4", "FIA-6", "FIA-7",
+    ]);
     let mut covered = BTreeSet::new();
     let mut command_ids = BTreeSet::new();
     for (index, command) in commands.iter().enumerate() {
@@ -1547,7 +1550,7 @@ fn validate_runner_commands(inventory: &Inventory) -> Result<()> {
         }
         covered.insert(command.fia.as_str());
     }
-    for required in allowed {
+    for required in required {
         ensure!(
             covered.contains(required),
             "runner commands do not cover {required}"
