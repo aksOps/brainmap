@@ -274,6 +274,8 @@ pub fn replace_file_atomic(staged: &Path, target: &Path) -> Result<()> {
 pub struct LockedJsonl {
     file: File,
     path: PathBuf,
+    #[cfg(windows)]
+    windows_mutex: WindowsJsonlMutex,
 }
 
 impl LockedJsonl {
@@ -305,7 +307,62 @@ impl LockedJsonl {
 
 impl Drop for LockedJsonl {
     fn drop(&mut self) {
+        #[cfg(not(windows))]
         let _ = FileExt::unlock(&self.file);
+    }
+}
+
+#[cfg(windows)]
+struct WindowsJsonlMutex {
+    handle: windows_sys::Win32::Foundation::HANDLE,
+}
+
+#[cfg(windows)]
+impl WindowsJsonlMutex {
+    fn acquire(path: &Path) -> Result<Self> {
+        use std::os::windows::ffi::OsStrExt;
+        use std::ptr::null;
+        use windows_sys::Win32::Foundation::{
+            CloseHandle, GetLastError, WAIT_ABANDONED, WAIT_FAILED, WAIT_OBJECT_0,
+        };
+        use windows_sys::Win32::System::Threading::{CreateMutexW, INFINITE, WaitForSingleObject};
+
+        let normalized = path
+            .to_string_lossy()
+            .replace('\\', "/")
+            .to_ascii_lowercase();
+        let name = format!("Local\\BrainMapJsonl-{}", sha256_hex(normalized.as_bytes()));
+        let name = name
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let handle = unsafe { CreateMutexW(null(), 0, name.as_ptr()) };
+        if handle.is_null() {
+            return Err(std::io::Error::last_os_error()).context("create Windows JSONL mutex");
+        }
+        let wait = unsafe { WaitForSingleObject(handle, INFINITE) };
+        if !matches!(wait, WAIT_OBJECT_0 | WAIT_ABANDONED) {
+            let error = if wait == WAIT_FAILED {
+                std::io::Error::from_raw_os_error(unsafe { GetLastError() } as i32)
+            } else {
+                std::io::Error::other(format!("unexpected mutex wait result {wait}"))
+            };
+            unsafe { CloseHandle(handle) };
+            return Err(error).context("wait for Windows JSONL mutex");
+        }
+        Ok(Self { handle })
+    }
+}
+
+#[cfg(windows)]
+impl Drop for WindowsJsonlMutex {
+    fn drop(&mut self) {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::ReleaseMutex;
+        unsafe {
+            ReleaseMutex(self.handle);
+            CloseHandle(self.handle);
+        }
     }
 }
 
@@ -318,6 +375,9 @@ pub fn lock_jsonl(path: &Path) -> Result<LockedJsonl> {
         .truncate(false)
         .open(path)
         .with_context(|| format!("append {}", path.display()))?;
+    #[cfg(windows)]
+    let windows_mutex = WindowsJsonlMutex::acquire(path)?;
+    #[cfg(not(windows))]
     for attempt in 0..50 {
         match FileExt::lock(&file) {
             Ok(()) => break,
@@ -332,6 +392,8 @@ pub fn lock_jsonl(path: &Path) -> Result<LockedJsonl> {
     Ok(LockedJsonl {
         file,
         path: path.to_path_buf(),
+        #[cfg(windows)]
+        windows_mutex,
     })
 }
 
