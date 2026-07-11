@@ -192,8 +192,10 @@ pub fn replace_file_atomic(staged: &Path, target: &Path) -> Result<()> {
 #[cfg(windows)]
 pub fn replace_file_atomic(staged: &Path, target: &Path) -> Result<()> {
     use std::os::windows::ffi::OsStrExt;
+    use std::ptr::null;
     use windows_sys::Win32::Storage::FileSystem::{
-        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW, REPLACEFILE_WRITE_THROUGH,
+        ReplaceFileW,
     };
 
     let staged = staged
@@ -206,6 +208,19 @@ pub fn replace_file_atomic(staged: &Path, target: &Path) -> Result<()> {
         .encode_wide()
         .chain(std::iter::once(0))
         .collect::<Vec<_>>();
+    let replaced = unsafe {
+        ReplaceFileW(
+            target.as_ptr(),
+            staged.as_ptr(),
+            null(),
+            REPLACEFILE_WRITE_THROUGH,
+            null(),
+            null(),
+        )
+    };
+    if replaced != 0 {
+        return Ok(());
+    }
     let moved = unsafe {
         MoveFileExW(
             staged.as_ptr(),
@@ -288,12 +303,15 @@ impl FileLock {
             .write(true)
             .truncate(false)
             .open(&path)?;
+        let mut owner = String::new();
+        let _ = file.read_to_string(&mut owner);
+        let _ = file.seek(SeekFrom::Start(0));
         if let Err(error) = FileExt::try_lock(&file) {
-            let owner = fs::read_to_string(&path)
-                .ok()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-                .unwrap_or_else(|| "owner metadata unavailable".into());
+            let owner = if owner.trim().is_empty() {
+                "owner metadata unavailable".to_string()
+            } else {
+                owner.trim().to_string()
+            };
             bail!("lock already held at {} ({owner}): {error}", path.display());
         }
         file.set_len(0)?;
@@ -405,7 +423,7 @@ pub fn normalize_archive_path(path: &Path) -> Result<String> {
     if normalized.as_os_str().is_empty() {
         bail!("empty archive path");
     }
-    Ok(normalized.to_string_lossy().to_string())
+    Ok(normalized.to_string_lossy().replace('\\', "/"))
 }
 
 pub fn portable_archive_collision_key(normalized_path: &str) -> Result<String> {
