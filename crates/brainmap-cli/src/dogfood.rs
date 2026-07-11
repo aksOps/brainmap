@@ -341,7 +341,7 @@ struct TransactionJournal {
 #[serde(tag = "operation", rename_all = "snake_case")]
 enum DogfoodTransaction {
     Start(Box<StartTransaction>),
-    Finalize(FinalizeTransaction),
+    Finalize(Box<FinalizeTransaction>),
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -695,8 +695,12 @@ fn validate_finalize_transaction_paths(
     if !transaction.out.is_absolute()
         || !transaction.staging.is_absolute()
         || transaction.staging.parent() != Some(out_parent)
-        || fs::canonicalize(out_parent).ok().as_deref() != Some(out_parent)
     {
+        bail!("unsafe dogfood transaction journal path for evidence output");
+    }
+    let canonical_parent = fs::canonicalize(out_parent)
+        .context("unsafe dogfood transaction journal path for evidence output")?;
+    if !canonical_parent.is_dir() {
         bail!("unsafe dogfood transaction journal path for evidence output");
     }
     let out_name = transaction
@@ -718,15 +722,44 @@ fn validate_finalize_transaction_paths(
 
     let canonical_root = fs::canonicalize(root)
         .with_context(|| format!("resolve dogfood vault root {}", root.display()))?;
-    if transaction.out == transaction.staging
-        || transaction.out.starts_with(&canonical_root)
-        || canonical_root.starts_with(&transaction.out)
-        || transaction.staging.starts_with(&canonical_root)
-        || canonical_root.starts_with(&transaction.staging)
+    let canonical_out = canonical_future_path(&transaction.out)?;
+    let canonical_staging = canonical_future_path(&transaction.staging)?;
+    if canonical_out == canonical_staging
+        || canonical_out.starts_with(&canonical_root)
+        || canonical_root.starts_with(&canonical_out)
+        || canonical_staging.starts_with(&canonical_root)
+        || canonical_root.starts_with(&canonical_staging)
     {
         bail!("unsafe dogfood transaction journal path overlapping the vault");
     }
     Ok(())
+}
+
+fn canonical_future_path(path: &Path) -> Result<PathBuf> {
+    let mut cursor = path;
+    let mut missing = Vec::new();
+    loop {
+        match fs::canonicalize(cursor) {
+            Ok(mut canonical) => {
+                for component in missing.iter().rev() {
+                    canonical.push(component);
+                }
+                return Ok(canonical);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let name = cursor
+                    .file_name()
+                    .context("unsafe dogfood transaction journal path without an ancestor")?;
+                missing.push(name.to_os_string());
+                cursor = cursor
+                    .parent()
+                    .context("unsafe dogfood transaction journal path without an ancestor")?;
+            }
+            Err(error) => {
+                return Err(error).context("canonicalize dogfood transaction journal path");
+            }
+        }
+    }
 }
 
 fn clear_transaction(root: &Path) -> Result<()> {
@@ -1900,12 +1933,18 @@ fn finalize_at_with_fault(
         staging: staging.clone(),
     };
     let result = (|| -> Result<QualificationReport> {
-        write_transaction(&root, DogfoodTransaction::Finalize(journal.clone()))?;
+        write_transaction(
+            &root,
+            DogfoodTransaction::Finalize(Box::new(journal.clone())),
+        )?;
         inject_finalize_fault(fault, FinalizeFault::JournalPrepared)?;
 
         write_state(&root, &archived_state)?;
         journal.phase = FinalizePhase::ArchivedStateWritten;
-        write_transaction(&root, DogfoodTransaction::Finalize(journal.clone()))?;
+        write_transaction(
+            &root,
+            DogfoodTransaction::Finalize(Box::new(journal.clone())),
+        )?;
         inject_finalize_fault(fault, FinalizeFault::ArchivedStateWritten)?;
 
         fs::create_dir(&staging)
@@ -1916,7 +1955,10 @@ fn finalize_at_with_fault(
                 .context("dogfood staging directory has no parent")?,
         )?;
         journal.phase = FinalizePhase::StagingCreated;
-        write_transaction(&root, DogfoodTransaction::Finalize(journal.clone()))?;
+        write_transaction(
+            &root,
+            DogfoodTransaction::Finalize(Box::new(journal.clone())),
+        )?;
         inject_finalize_fault(fault, FinalizeFault::StagingCreated)?;
 
         let export_relative = final_export_relative_path(&active.run_id);
@@ -1929,7 +1971,10 @@ fn finalize_at_with_fault(
         util::sync_file(&export_path)?;
         export::verify_export_archive(&export_path, None)?;
         journal.phase = FinalizePhase::ExportWritten;
-        write_transaction(&root, DogfoodTransaction::Finalize(journal.clone()))?;
+        write_transaction(
+            &root,
+            DogfoodTransaction::Finalize(Box::new(journal.clone())),
+        )?;
         inject_finalize_fault(fault, FinalizeFault::ExportWritten)?;
 
         let final_export = ChecksummedArtifact {
@@ -1984,7 +2029,10 @@ fn finalize_at_with_fault(
             "dogfood final evidence qualification manifest changed provenance"
         );
         journal.phase = FinalizePhase::QualificationBundleCopied;
-        write_transaction(&root, DogfoodTransaction::Finalize(journal.clone()))?;
+        write_transaction(
+            &root,
+            DogfoodTransaction::Finalize(Box::new(journal.clone())),
+        )?;
         inject_finalize_fault(fault, FinalizeFault::QualificationBundleCopied)?;
 
         util::write_atomic(
@@ -1992,7 +2040,10 @@ fn finalize_at_with_fault(
             &serde_json::to_vec_pretty(&report)?,
         )?;
         journal.phase = FinalizePhase::JsonReportWritten;
-        write_transaction(&root, DogfoodTransaction::Finalize(journal.clone()))?;
+        write_transaction(
+            &root,
+            DogfoodTransaction::Finalize(Box::new(journal.clone())),
+        )?;
         inject_finalize_fault(fault, FinalizeFault::JsonReportWritten)?;
 
         util::write_atomic(
@@ -2000,18 +2051,27 @@ fn finalize_at_with_fault(
             qualification_markdown(&report).as_bytes(),
         )?;
         journal.phase = FinalizePhase::MarkdownReportWritten;
-        write_transaction(&root, DogfoodTransaction::Finalize(journal.clone()))?;
+        write_transaction(
+            &root,
+            DogfoodTransaction::Finalize(Box::new(journal.clone())),
+        )?;
         inject_finalize_fault(fault, FinalizeFault::MarkdownReportWritten)?;
 
         journal.phase = FinalizePhase::ChecksumsWritten;
-        write_transaction(&root, DogfoodTransaction::Finalize(journal.clone()))?;
+        write_transaction(
+            &root,
+            DogfoodTransaction::Finalize(Box::new(journal.clone())),
+        )?;
         write_checksums(&staging)?;
         util::sync_directory(&staging)?;
         inject_finalize_fault(fault, FinalizeFault::ChecksumsWritten)?;
 
         util::rename_and_sync(&staging, &out)?;
         journal.phase = FinalizePhase::EvidenceActivated;
-        write_transaction(&root, DogfoodTransaction::Finalize(journal.clone()))?;
+        write_transaction(
+            &root,
+            DogfoodTransaction::Finalize(Box::new(journal.clone())),
+        )?;
         inject_finalize_fault(fault, FinalizeFault::EvidenceActivated)?;
 
         let verified_final_export =
@@ -2026,7 +2086,10 @@ fn finalize_at_with_fault(
         write_state(&root, &final_state)?;
         journal.phase = FinalizePhase::FinalStateWritten;
         journal.archived_state = final_state;
-        write_transaction(&root, DogfoodTransaction::Finalize(journal.clone()))?;
+        write_transaction(
+            &root,
+            DogfoodTransaction::Finalize(Box::new(journal.clone())),
+        )?;
         inject_finalize_fault(fault, FinalizeFault::FinalStateWritten)?;
 
         clear_transaction(&root)?;
@@ -3048,7 +3111,7 @@ mod tests {
         fs::write(external_directory.join("sentinel"), b"keep me too").unwrap();
         write_transaction(
             &root,
-            DogfoodTransaction::Finalize(FinalizeTransaction {
+            DogfoodTransaction::Finalize(Box::new(FinalizeTransaction {
                 phase: FinalizePhase::Prepared,
                 run_id: "dogfood_safe".into(),
                 active_index: 0,
@@ -3056,7 +3119,7 @@ mod tests {
                 archived_state: DogfoodState::default(),
                 out: tmp.path().join("unused-output"),
                 staging: external_directory.clone(),
-            }),
+            })),
         )
         .unwrap();
 
@@ -3074,7 +3137,7 @@ mod tests {
             .join(".safe-output.evidence_1720000000000_aaaaaaaaaaaa.tmp");
         write_transaction(
             &root,
-            DogfoodTransaction::Finalize(FinalizeTransaction {
+            DogfoodTransaction::Finalize(Box::new(FinalizeTransaction {
                 phase: FinalizePhase::Prepared,
                 run_id: "dogfood_safe".into(),
                 active_index: 0,
@@ -3082,7 +3145,7 @@ mod tests {
                 archived_state: DogfoodState::default(),
                 out: out.clone(),
                 staging: staging.clone(),
-            }),
+            })),
         )
         .unwrap();
 

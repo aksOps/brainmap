@@ -542,6 +542,8 @@ fn rollback_restore_swap(
 fn sync_directory(path: &Path) -> Result<()> {
     #[cfg(unix)]
     fs::File::open(path)?.sync_all()?;
+    #[cfg(not(unix))]
+    let _ = path;
     Ok(())
 }
 
@@ -821,6 +823,12 @@ mod tests {
         vault::init_vault(Some(root.clone()), false, true).unwrap();
         fs::write(root.join("CaseCollision.md"), b"upper").unwrap();
         fs::write(root.join("casecollision.md"), b"lower").unwrap();
+
+        // The default macOS and Windows filesystems collapse these names into
+        // one file, so there is no source collision for the exporter to see.
+        if fs::read(root.join("CaseCollision.md")).unwrap() != b"upper" {
+            return;
+        }
 
         let err = archive_bytes(&root, ExportMode::Portable, false).unwrap_err();
 

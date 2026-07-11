@@ -269,11 +269,13 @@ fn install_candidate_files(
                     && file_sha256(&brainmapd)? == source.brainmapd_sha256,
                 "installed candidate hashes do not match the qualified pair"
             );
+            let canonical_brainmap = fs::canonicalize(&brainmap)?;
+            let canonical_brainmapd = fs::canonicalize(&brainmapd)?;
             ensure!(
                 resolve_path_command("brainmap", path_entries)?.as_deref()
-                    == Some(brainmap.as_path())
+                    == Some(canonical_brainmap.as_path())
                     && resolve_path_command("brainmapd", path_entries)?.as_deref()
-                        == Some(brainmapd.as_path()),
+                        == Some(canonical_brainmapd.as_path()),
                 "installed candidate pair is shadowed on PATH"
             );
             verify_installed(&brainmap, &brainmapd)
@@ -484,9 +486,12 @@ fn file_sha256(path: &Path) -> Result<String> {
 }
 
 fn destination_on_path(destination: &Path, path_entries: &[PathBuf]) -> bool {
-    path_entries
-        .iter()
-        .any(|entry| canonical_path_entry(entry).is_ok_and(|canonical| canonical == destination))
+    let Ok(canonical_destination) = canonical_future_directory(destination) else {
+        return false;
+    };
+    path_entries.iter().any(|entry| {
+        canonical_path_entry(entry).is_ok_and(|canonical| canonical == canonical_destination)
+    })
 }
 
 fn canonical_path_entry(path: &Path) -> Result<PathBuf> {
@@ -519,6 +524,7 @@ fn destination_will_resolve(
     path_entries: &[PathBuf],
     command: &str,
 ) -> Result<bool> {
+    let canonical_destination = canonical_future_directory(destination)?;
     let executable = if cfg!(windows) {
         format!("{command}.exe")
     } else {
@@ -529,7 +535,7 @@ fn destination_will_resolve(
             Ok(directory) => directory,
             Err(_) => continue,
         };
-        if directory == destination {
+        if directory == canonical_destination {
             return Ok(true);
         }
         let candidate = directory.join(&executable);
