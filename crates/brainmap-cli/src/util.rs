@@ -127,6 +127,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
             .with_context(|| format!("create {}", tmp.display()))?;
         f.write_all(bytes)?;
         f.sync_all()?;
+        drop(f);
         replace_file_atomic(&tmp, path)?;
         #[cfg(unix)]
         File::open(parent)?.sync_all()?;

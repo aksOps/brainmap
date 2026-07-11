@@ -1063,9 +1063,12 @@ fn codex_installer_persists_an_absolute_vault_path() {
     let args = config["mcp_servers"]["brainmap"]["args"]
         .as_array()
         .expect("MCP args");
+    let expected_vault = std::fs::canonicalize(&working)
+        .expect("canonicalize working directory")
+        .join("BrainMap");
     assert_eq!(
         args[3].as_str(),
-        Some(working.join("BrainMap").to_string_lossy().as_ref())
+        Some(expected_vault.to_string_lossy().as_ref())
     );
 }
 
