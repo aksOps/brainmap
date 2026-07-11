@@ -350,6 +350,7 @@ if [[ "$#" -eq 10 && "$9" == app-server && "${10}" == --stdio ]]; then
           --argjson badOrder "${FIA5_FIXTURE_BAD_ORDER:-0}" \
           --argjson badSecondOutcome "${FIA5_FIXTURE_BAD_SECOND_OUTCOME:-0}" \
           --argjson badSecondRecord "${FIA5_FIXTURE_BAD_SECOND_RECORD:-0}" \
+          --argjson droppedRejected "${FIA5_FIXTURE_DROPPED_REJECTED:-0}" \
           --argjson sideEffect "${FIA5_FIXTURE_SIDE_EFFECT_ITEM:-0}" \
           --argjson extraTool "${FIA5_FIXTURE_EXTRA_TOOL:-0}" \
           --argjson secondUser "${FIA5_FIXTURE_SECOND_USER:-0}" '
@@ -382,10 +383,13 @@ if [[ "$#" -eq 10 && "$9" == app-server && "${10}" == --stdio ]]; then
                 decisionId:$decisionId,chosen:"biome",wasAsked:true
               };{recorded:true}),
               call("call-3";"brainmap_learn_feedback";{
-                decisionId:$decisionId,chosen:"prettier",rejected:"biome"
+                decisionId:$decisionId,chosen:"prettier",rejected:["biome"]
               };{packetCreated:true,packetId:$packetId}),
               call("call-4";"brainmap_preview_update";{packetId:$packetId};[{
-                id:$packetId,status:"pending"
+                id:$packetId,status:"pending",decisionRule:{
+                  chosen:"prettier",
+                  rejected:(if $droppedRejected == 1 then [] else ["biome"] end)
+                }
               }]),
               call("call-5";"brainmap_apply_update";{
                 packetId:$packetId,approved:true
@@ -628,6 +632,8 @@ FIA5_FIXTURE_BAD_SECOND_OUTCOME=1 expect_failure 'exact completed Brainmap MCP l
   "${fixture_producer}" finalize --state "${state}" --out "${temporary}/bad-second-outcome"
 FIA5_FIXTURE_BAD_SECOND_RECORD=1 expect_failure 'exact completed Brainmap MCP lifecycle' \
   "${fixture_producer}" finalize --state "${state}" --out "${temporary}/bad-second-record"
+FIA5_FIXTURE_DROPPED_REJECTED=1 expect_failure 'exact completed Brainmap MCP lifecycle' \
+  "${fixture_producer}" finalize --state "${state}" --out "${temporary}/dropped-rejected"
 FIA5_FIXTURE_SECOND_USER=1 expect_failure 'exact completed Brainmap MCP lifecycle' \
   "${fixture_producer}" finalize --state "${state}" --out "${temporary}/second-user"
 FIA5_FIXTURE_SIDE_EFFECT_ITEM=1 expect_failure 'exact completed Brainmap MCP lifecycle' \

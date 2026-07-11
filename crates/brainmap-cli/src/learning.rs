@@ -451,7 +451,24 @@ pub fn learn_feedback(args: LearnFeedbackArgs) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn parse_rejected_choices(choices: &str) -> Vec<String> {
+    choices
+        .split('|')
+        .map(str::trim)
+        .filter(|choice| !choice.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 pub(crate) fn learn_feedback_quiet(args: LearnFeedbackArgs) -> Result<Option<String>> {
+    let rejected = args.rejected.as_deref().map(parse_rejected_choices);
+    learn_feedback_quiet_with_rejected(args, rejected)
+}
+
+pub(crate) fn learn_feedback_quiet_with_rejected(
+    args: LearnFeedbackArgs,
+    rejected: Option<Vec<String>>,
+) -> Result<Option<String>> {
     let root = vault::resolve_vault(args.vault);
     let mut ledger = util::lock_jsonl(&root.join("90-calibration/decision-ledger.jsonl"))?;
     let active_run = crate::dogfood::active_run_context(&root)?;
@@ -459,11 +476,16 @@ pub(crate) fn learn_feedback_quiet(args: LearnFeedbackArgs) -> Result<Option<Str
     if args.correction.is_none() && args.chosen.is_none() {
         bail!("feedback requires either a correction or a chosen option");
     }
+    let rejected_summary = rejected
+        .as_ref()
+        .filter(|choices| !choices.is_empty())
+        .map(|choices| choices.join(", "))
+        .unwrap_or_else(|| "none".into());
     let raw_feedback = args.correction.clone().unwrap_or_else(|| {
         format!(
             "choose {}; rejected {}",
             args.chosen.as_deref().unwrap_or_default(),
-            args.rejected.as_deref().unwrap_or("none")
+            rejected_summary
         )
     });
     let redacted = privacy::redact(&raw_feedback);
@@ -491,13 +513,10 @@ pub(crate) fn learn_feedback_quiet(args: LearnFeedbackArgs) -> Result<Option<Str
     let (chosen, rejected) = if let Some(chosen) = args.chosen {
         (
             privacy::redact(&chosen),
-            args.rejected
-                .as_deref()
+            rejected
                 .unwrap_or_default()
-                .split('|')
-                .map(str::trim)
-                .filter(|choice| !choice.is_empty())
-                .map(privacy::redact)
+                .iter()
+                .map(|choice| privacy::redact(choice))
                 .collect(),
         )
     } else {

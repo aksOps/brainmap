@@ -118,7 +118,12 @@ fn tool_descriptor(name: &str) -> Value {
                 "decisionId": {"type":"string"},
                 "correction": {"type":"string"},
                 "chosen": {"type":"string"},
-                "rejected": {"type":"string"},
+                "rejected": {
+                    "anyOf": [
+                        {"type":"string"},
+                        {"type":"array","items":{"type":"string"}}
+                    ]
+                },
                 "incidentType": {
                     "type":"string",
                     "enum": crate::cli::FeedbackIncident::ALL
@@ -226,18 +231,22 @@ fn call_tool(root: &Path, name: &str, args: Value) -> Result<Value> {
             json!({"recorded": true})
         }
         "brainmap_learn_feedback" => {
-            let packet_id = learning::learn_feedback_quiet(crate::cli::LearnFeedbackArgs {
-                decision_id: string_arg(&args, "decisionId")
-                    .context("learn feedback requires decisionId")?,
-                correction: string_arg(&args, "correction"),
-                chosen: string_arg(&args, "chosen"),
-                rejected: string_arg(&args, "rejected"),
-                incident: string_arg(&args, "incidentType")
-                    .map(|value| crate::cli::FeedbackIncident::parse(&value))
-                    .transpose()
-                    .map_err(anyhow::Error::msg)?,
-                vault: Some(root.to_path_buf()),
-            })?;
+            let rejected = rejected_choices_arg(&args)?;
+            let packet_id = learning::learn_feedback_quiet_with_rejected(
+                crate::cli::LearnFeedbackArgs {
+                    decision_id: string_arg(&args, "decisionId")
+                        .context("learn feedback requires decisionId")?,
+                    correction: string_arg(&args, "correction"),
+                    chosen: string_arg(&args, "chosen"),
+                    rejected: None,
+                    incident: string_arg(&args, "incidentType")
+                        .map(|value| crate::cli::FeedbackIncident::parse(&value))
+                        .transpose()
+                        .map_err(anyhow::Error::msg)?,
+                    vault: Some(root.to_path_buf()),
+                },
+                rejected,
+            )?;
             json!({"packetCreated": packet_id.is_some(), "packetId": packet_id})
         }
         "brainmap_list_pending" => learning::pending_updates_value(root, None)?,
@@ -311,6 +320,20 @@ fn gate_input(args: Value) -> Result<gate::GateInput> {
 
 fn string_arg(args: &Value, key: &str) -> Option<String> {
     args.get(key).and_then(Value::as_str).map(str::to_string)
+}
+
+fn rejected_choices_arg(args: &Value) -> Result<Option<Vec<String>>> {
+    match args.get("rejected") {
+        None => Ok(None),
+        Some(Value::String(value)) => Ok(Some(learning::parse_rejected_choices(value))),
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|value| value.as_str().map(str::to_string))
+            .collect::<Option<Vec<_>>>()
+            .map(Some)
+            .context("learn feedback rejected must be a string or an array of strings"),
+        Some(_) => bail!("learn feedback rejected must be a string or an array of strings"),
+    }
 }
 
 fn options_arg(args: &Value) -> Vec<String> {
@@ -414,6 +437,20 @@ mod tests {
             assert_eq!(tool["inputSchema"]["additionalProperties"], false);
             assert!(tool["inputSchema"]["properties"].is_object());
         }
+
+        let feedback = tool_descriptors()
+            .into_iter()
+            .find(|tool| tool["name"] == "brainmap_learn_feedback")
+            .expect("feedback tool descriptor");
+        assert_eq!(
+            feedback["inputSchema"]["properties"]["rejected"],
+            json!({
+                "anyOf": [
+                    {"type":"string"},
+                    {"type":"array","items":{"type":"string"}}
+                ]
+            })
+        );
     }
 
     #[test]
