@@ -453,6 +453,30 @@ run_release_qualification() {
     and .learnedRuleRecall.negativeSpecificity == 1
   ' "${raw}/qualification/eval.json" >/dev/null
   jq -e '
+    .outcome == "ask_user"
+    and .selectedOption == null
+    and .predictedOutcome == "proceed"
+    and .predictedSelectedOption == "cargo test"
+    and .gateMode == "shadow"
+    and .autopilotMode == "shadow"
+  ' "${raw}/qualification/source-corrected-gate.json" >/dev/null
+  jq -e '
+    .outcome == "ask_user"
+    and .selectedOption == null
+    and .predictedOutcome == "proceed"
+    and .predictedSelectedOption == "biome"
+    and .gateMode == "shadow"
+    and .autopilotMode == "shadow"
+  ' "${raw}/qualification/source-learned-gate.json" >/dev/null
+  jq -e '
+    .outcome == "ask_user"
+    and .selectedOption == null
+    and .predictedOutcome == "proceed"
+    and .predictedSelectedOption == "Markdown+JSONL"
+    and .gateMode == "shadow"
+    and .autopilotMode == "shadow"
+  ' "${raw}/qualification/source-policy-gate.json" >/dev/null
+  jq -e '
     .scaleRequested == 1000
     and .executableRules == 1000
     and .candidateBounds.retrieval == "actual-rule-term-postings"
