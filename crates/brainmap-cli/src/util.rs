@@ -208,28 +208,36 @@ pub fn replace_file_atomic(staged: &Path, target: &Path) -> Result<()> {
         .encode_wide()
         .chain(std::iter::once(0))
         .collect::<Vec<_>>();
-    let replaced = unsafe {
-        ReplaceFileW(
-            target.as_ptr(),
-            staged.as_ptr(),
-            null(),
-            REPLACEFILE_WRITE_THROUGH,
-            null(),
-            null(),
-        )
-    };
-    if replaced != 0 {
-        return Ok(());
-    }
-    let moved = unsafe {
-        MoveFileExW(
-            staged.as_ptr(),
-            target.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if moved == 0 {
-        return Err(std::io::Error::last_os_error()).context("atomically replace Windows file");
+    for attempt in 0..50 {
+        let replaced = unsafe {
+            ReplaceFileW(
+                target.as_ptr(),
+                staged.as_ptr(),
+                null(),
+                REPLACEFILE_WRITE_THROUGH,
+                null(),
+                null(),
+            )
+        };
+        if replaced != 0 {
+            return Ok(());
+        }
+        let moved = unsafe {
+            MoveFileExW(
+                staged.as_ptr(),
+                target.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if moved != 0 {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        let retryable = matches!(error.raw_os_error(), Some(5 | 32 | 33));
+        if !retryable || attempt == 49 {
+            return Err(error).context("atomically replace Windows file");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
     Ok(())
 }
