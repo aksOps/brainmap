@@ -242,6 +242,7 @@ if [[ "${1:-}" == "build" ]]; then
   [[ "${BRAINMAP_INTERNAL_SOURCE_CLEAN:-}" == true ]]
   [[ "${BRAINMAP_INTERNAL_LOCKED:-}" == true ]]
   [[ "${BRAINMAP_INTERNAL_TWO_ROOT_CANDIDATE:-}" == true ]]
+  echo 'artifact cache: /tmp/fixture-build-cache'
 fi
 exit 0
 EOF

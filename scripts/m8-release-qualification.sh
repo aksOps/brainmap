@@ -592,7 +592,8 @@ while IFS= read -r -d '' retained; do
     "${brainmapd}" '<brainmapd>' \
     "${out_parent}" '<evidence-parent>' \
     "${HOME:-}" '<home>' \
-    "${TMPDIR:-}" '<tmp>'
+    "${TMPDIR:-}" '<tmp>' \
+    '/tmp' '<tmp>'
 done < <(
   find "${raw}" -type f \
     ! -path "${raw}/reproducibility-manifest.json" \
