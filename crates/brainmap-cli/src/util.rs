@@ -4,7 +4,7 @@ use fs4::FileExt;
 use sha2::{Digest, Sha256};
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -138,6 +138,49 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     result
 }
 
+pub fn sync_directory(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        File::open(path)
+            .with_context(|| format!("open directory {} for sync", path.display()))?
+            .sync_all()
+            .with_context(|| format!("sync directory {}", path.display()))?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
+
+pub fn sync_file(path: &Path) -> Result<()> {
+    File::open(path)
+        .with_context(|| format!("open {} for sync", path.display()))?
+        .sync_all()
+        .with_context(|| format!("sync {}", path.display()))
+}
+
+pub fn rename_and_sync(staged: &Path, target: &Path) -> Result<()> {
+    let parent = target.parent().unwrap_or_else(|| Path::new("."));
+    fs::rename(staged, target)
+        .with_context(|| format!("rename {} to {}", staged.display(), target.display()))?;
+    sync_directory(parent)
+}
+
+pub fn remove_file_and_sync(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => sync_directory(path.parent().unwrap_or_else(|| Path::new("."))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("remove {}", path.display())),
+    }
+}
+
+pub fn remove_dir_all_and_sync(path: &Path) -> Result<()> {
+    match fs::remove_dir_all(path) {
+        Ok(()) => sync_directory(path.parent().unwrap_or_else(|| Path::new("."))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("remove {}", path.display())),
+    }
+}
+
 #[cfg(not(windows))]
 pub fn replace_file_atomic(staged: &Path, target: &Path) -> Result<()> {
     fs::rename(staged, target)
@@ -175,21 +218,58 @@ pub fn replace_file_atomic(staged: &Path, target: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn append_jsonl(path: &Path, value: &serde_json::Value) -> Result<()> {
+pub struct LockedJsonl {
+    file: File,
+    path: PathBuf,
+}
+
+impl LockedJsonl {
+    pub fn append(&mut self, value: &serde_json::Value) -> Result<()> {
+        let mut bytes = serde_json::to_vec(value)?;
+        bytes.push(b'\n');
+        self.file
+            .write_all(&bytes)
+            .with_context(|| format!("append {}", self.path.display()))?;
+        self.file
+            .sync_data()
+            .with_context(|| format!("sync {}", self.path.display()))
+    }
+
+    pub fn read_all(&mut self) -> Result<Vec<u8>> {
+        self.file
+            .seek(SeekFrom::Start(0))
+            .with_context(|| format!("seek {}", self.path.display()))?;
+        let mut bytes = Vec::new();
+        self.file
+            .read_to_end(&mut bytes)
+            .with_context(|| format!("read {}", self.path.display()))?;
+        Ok(bytes)
+    }
+}
+
+impl Drop for LockedJsonl {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self.file);
+    }
+}
+
+pub fn lock_jsonl(path: &Path) -> Result<LockedJsonl> {
     ensure_parent(path)?;
-    let mut bytes = serde_json::to_vec(value)?;
-    bytes.push(b'\n');
-    let mut file = OpenOptions::new()
+    let file = OpenOptions::new()
         .create(true)
         .read(true)
         .append(true)
         .open(path)
         .with_context(|| format!("append {}", path.display()))?;
     FileExt::lock(&file).with_context(|| format!("lock {}", path.display()))?;
-    file.write_all(&bytes)?;
-    file.sync_data()?;
-    FileExt::unlock(&file).with_context(|| format!("unlock {}", path.display()))?;
-    Ok(())
+    Ok(LockedJsonl {
+        file,
+        path: path.to_path_buf(),
+    })
+}
+
+pub fn append_jsonl(path: &Path, value: &serde_json::Value) -> Result<()> {
+    lock_jsonl(path)?.append(value)
 }
 
 #[derive(Debug)]

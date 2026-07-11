@@ -9,6 +9,30 @@ use std::process::Command;
 const MODEL_ID: &str = "minishlab/potion-base-8M";
 const MODEL_BASE_URL: &str = "https://huggingface.co/minishlab/potion-base-8M/resolve/main";
 const MODEL_DIR: &str = "potion-base-8M";
+const UNKNOWN_COMMIT: &str = "0000000000000000000000000000000000000000";
+const QUALIFICATION_MARKER: &str = "brainmap-clean-locked-two-root-v1";
+const NONQUALIFYING_MARKER: &str = "nonqualifying";
+const INTERNAL_MARKER_ENV: &str = "BRAINMAP_INTERNAL_QUALIFICATION_MARKER";
+const INTERNAL_COMMIT_ENV: &str = "BRAINMAP_INTERNAL_CANDIDATE_COMMIT";
+const INTERNAL_CLEAN_ENV: &str = "BRAINMAP_INTERNAL_SOURCE_CLEAN";
+const INTERNAL_LOCKED_ENV: &str = "BRAINMAP_INTERNAL_LOCKED";
+const INTERNAL_TWO_ROOT_ENV: &str = "BRAINMAP_INTERNAL_TWO_ROOT_CANDIDATE";
+
+const PRODUCER_SCRIPTS: [(&str, &str); 4] = [
+    (
+        "BRAINMAP_M8_INTEGRATED_QUALIFICATION_SHA256",
+        "scripts/m8-integrated-qualification.sh",
+    ),
+    ("BRAINMAP_M8_CODEX_FIA5_SHA256", "scripts/m8-codex-fia5.sh"),
+    (
+        "BRAINMAP_M8_RELEASE_QUALIFICATION_SHA256",
+        "scripts/m8-release-qualification.sh",
+    ),
+    (
+        "BRAINMAP_M8_ASSEMBLE_QUALIFICATION_SHA256",
+        "scripts/m8-assemble-qualification.sh",
+    ),
+];
 
 struct ModelFile {
     path: &'static str,
@@ -66,6 +90,7 @@ const MODEL_FILES: &[ModelFile] = &[
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed=build.rs");
+    emit_build_provenance()?;
     let out_dir = PathBuf::from(env::var("OUT_DIR")?);
     let model_dir = out_dir.join("model-download").join(MODEL_DIR);
     fs::create_dir_all(&model_dir)?;
@@ -93,6 +118,138 @@ fn main() -> Result<(), Box<dyn Error>> {
         pack_bytes.len()
     );
     Ok(())
+}
+
+fn emit_build_provenance() -> Result<(), Box<dyn Error>> {
+    for variable in [
+        INTERNAL_MARKER_ENV,
+        INTERNAL_COMMIT_ENV,
+        INTERNAL_CLEAN_ENV,
+        INTERNAL_LOCKED_ENV,
+        INTERNAL_TWO_ROOT_ENV,
+        "PROFILE",
+    ] {
+        println!("cargo:rerun-if-env-changed={variable}");
+    }
+
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
+    let workspace_root = manifest_dir
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("brainmap-cli package must live under the workspace crates directory")?;
+    emit_git_reruns(workspace_root);
+
+    let profile = env::var("PROFILE").unwrap_or_else(|_| "unknown".to_owned());
+    let supplied_commit = env::var(INTERNAL_COMMIT_ENV).unwrap_or_default();
+    let qualifying = profile == "release"
+        && env::var(INTERNAL_MARKER_ENV).as_deref() == Ok(QUALIFICATION_MARKER)
+        && is_full_commit(&supplied_commit)
+        && env::var(INTERNAL_CLEAN_ENV).as_deref() == Ok("true")
+        && env::var(INTERNAL_LOCKED_ENV).as_deref() == Ok("true")
+        && env::var(INTERNAL_TWO_ROOT_ENV).as_deref() == Ok("true");
+
+    let candidate_commit = if qualifying {
+        supplied_commit
+    } else {
+        git_head(workspace_root).unwrap_or_else(|| UNKNOWN_COMMIT.to_owned())
+    };
+    let marker = if qualifying {
+        QUALIFICATION_MARKER
+    } else {
+        NONQUALIFYING_MARKER
+    };
+
+    println!("cargo:rustc-env=BRAINMAP_BUILD_CANDIDATE_COMMIT={candidate_commit}");
+    println!("cargo:rustc-env=BRAINMAP_BUILD_CARGO_PROFILE={profile}");
+    println!("cargo:rustc-env=BRAINMAP_BUILD_QUALIFICATION_MARKER={marker}");
+    println!("cargo:rustc-env=BRAINMAP_BUILD_QUALIFICATION_ELIGIBLE={qualifying}");
+    println!("cargo:rustc-env=BRAINMAP_BUILD_QUALIFICATION_RELEASE={qualifying}");
+    println!("cargo:rustc-env=BRAINMAP_BUILD_QUALIFICATION_LOCKED={qualifying}");
+    println!("cargo:rustc-env=BRAINMAP_BUILD_TWO_ROOT_CANDIDATE={qualifying}");
+
+    for (rustc_env, relative) in PRODUCER_SCRIPTS {
+        let path = workspace_root.join(relative);
+        println!("cargo:rerun-if-changed={}", path.display());
+        let digest = match fs::read(&path) {
+            Ok(bytes) => sha256_hex(&bytes),
+            Err(error) if !qualifying => {
+                println!(
+                    "cargo:warning=producer script unavailable for nonqualifying build: {} ({error})",
+                    path.display()
+                );
+                "0".repeat(64)
+            }
+            Err(error) => {
+                return Err(format!(
+                    "qualifying build requires producer script {}: {error}",
+                    path.display()
+                )
+                .into());
+            }
+        };
+        println!("cargo:rustc-env={rustc_env}={digest}");
+    }
+    Ok(())
+}
+
+fn is_full_commit(value: &str) -> bool {
+    value.len() == 40
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn git_head(workspace_root: &Path) -> Option<String> {
+    let output = Command::new("git")
+        .args(["-C"])
+        .arg(workspace_root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let commit = String::from_utf8(output.stdout).ok()?.trim().to_owned();
+    is_full_commit(&commit).then_some(commit)
+}
+
+fn emit_git_reruns(workspace_root: &Path) {
+    let Some(git_dir) = git_path(workspace_root, "--absolute-git-dir") else {
+        return;
+    };
+    let head = PathBuf::from(&git_dir).join("HEAD");
+    println!("cargo:rerun-if-changed={}", head.display());
+    let Ok(contents) = fs::read_to_string(&head) else {
+        return;
+    };
+    let Some(reference) = contents.trim().strip_prefix("ref: ") else {
+        return;
+    };
+    let Some(common_dir) = git_path(workspace_root, "--git-common-dir") else {
+        return;
+    };
+    let common_dir = if Path::new(&common_dir).is_absolute() {
+        PathBuf::from(common_dir)
+    } else {
+        workspace_root.join(common_dir)
+    };
+    println!(
+        "cargo:rerun-if-changed={}",
+        common_dir.join(reference).display()
+    );
+}
+
+fn git_path(workspace_root: &Path, argument: &str) -> Option<String> {
+    let output = Command::new("git")
+        .args(["-C"])
+        .arg(workspace_root)
+        .args(["rev-parse", argument])
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
 fn download_file(file: &ModelFile, dest: &Path) -> Result<(), Box<dyn Error>> {

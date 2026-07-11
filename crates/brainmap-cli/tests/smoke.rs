@@ -12,6 +12,17 @@ fn brainmap_help_binary_builds() {
 }
 
 #[test]
+fn install_help_exposes_the_qualified_candidate_installer() {
+    let output = Command::new(env!("CARGO_BIN_EXE_brainmap"))
+        .args(["install", "--help"])
+        .output()
+        .expect("run brainmap install --help");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("candidate"));
+}
+
+#[test]
 fn skill_command_prints_dynamic_build_decision_engine_skill() {
     let output = ok(&["skill", "build-decision-engine", "--host", "codex"]);
     assert!(output.contains("Use Brainmap to learn decisions, not knowledge."));
@@ -341,7 +352,10 @@ fn structured_feedback_incidents_drive_prompt_free_shadow_metrics() {
         path(&root),
     ]);
     let learned: serde_json::Value = serde_json::from_str(&learned).expect("parse learned gate");
-    assert_eq!(learned["outcome"], "proceed");
+    assert_eq!(learned["outcome"], "ask_user");
+    assert_eq!(learned["selectedOption"], serde_json::Value::Null);
+    assert_eq!(learned["predictedOutcome"], "proceed");
+    assert_eq!(learned["predictedSelectedOption"], "biome");
     ok(&[
         "learn-feedback",
         "--decision-id",
@@ -375,7 +389,10 @@ fn structured_feedback_incidents_drive_prompt_free_shadow_metrics() {
         path(&root),
     ]);
     let policy: serde_json::Value = serde_json::from_str(&policy).expect("parse policy gate");
-    assert_eq!(policy["outcome"], "proceed");
+    assert_eq!(policy["outcome"], "ask_user");
+    assert_eq!(policy["selectedOption"], serde_json::Value::Null);
+    assert_eq!(policy["predictedOutcome"], "proceed");
+    assert_eq!(policy["predictedSelectedOption"], "Markdown+JSONL");
     fails(
         &[
             "learn-feedback",
@@ -538,8 +555,12 @@ fn onboarding_answer_file_changes_a_scoped_decision() {
         path(&root),
         "--dry-run",
     ]);
-    assert!(gate.contains("\"selectedOption\": \"pnpm\""));
-    assert!(gate.contains("\"ruleScope\": \"project:alpha\""));
+    let gate: serde_json::Value = serde_json::from_str(&gate).expect("parse learned gate");
+    assert_eq!(gate["outcome"], "ask_user");
+    assert_eq!(gate["selectedOption"], serde_json::Value::Null);
+    assert_eq!(gate["predictedOutcome"], "proceed");
+    assert_eq!(gate["predictedSelectedOption"], "pnpm");
+    assert_eq!(gate["ruleScope"], "project:alpha");
 }
 
 #[test]
@@ -621,9 +642,17 @@ fn interactive_onboarding_completes_on_a_clean_vault() {
         path(&root),
         "--dry-run",
     ]);
-    assert!(result.contains("\"selectedOption\": \"follow project configuration\""));
-    assert!(result.contains("\"ruleScope\": \"project:"));
-    assert!(!result.contains("\"ruleScope\": \"global\""));
+    let result: serde_json::Value = serde_json::from_str(&result).expect("parse learned gate");
+    assert_eq!(result["outcome"], "ask_user");
+    assert_eq!(result["selectedOption"], serde_json::Value::Null);
+    assert_eq!(result["predictedOutcome"], "proceed");
+    assert_eq!(
+        result["predictedSelectedOption"],
+        "follow project configuration"
+    );
+    let rule_scope = result["ruleScope"].as_str().expect("project rule scope");
+    assert!(rule_scope.starts_with("project:"));
+    assert_ne!(rule_scope, "global");
 }
 
 #[test]
@@ -674,10 +703,18 @@ fn codex_integration_doctor_verifies_the_learning_contract() {
     let tmp = tempfile::tempdir().expect("temp dir");
     let root = tmp.path().join("BrainMap");
     let project = tmp.path().join("Project");
+    let codex_home = tmp.path().join("codex-home");
     std::fs::create_dir_all(&project).expect("create project");
     ok(&["init-vault", "--vault", path(&root), "--yes"]);
     ok(&["index", "rebuild", "--vault", path(&root)]);
-    ok(&[
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_brainmap"))
+            .env("CODEX_HOME", &codex_home)
+            .args(args)
+            .output()
+            .expect("run Brainmap with isolated CODEX_HOME")
+    };
+    let install = run(&[
         "install",
         "harness",
         "--target",
@@ -687,8 +724,13 @@ fn codex_integration_doctor_verifies_the_learning_contract() {
         "--vault",
         path(&root),
     ]);
+    assert!(
+        install.status.success(),
+        "install stderr:\n{}",
+        String::from_utf8_lossy(&install.stderr)
+    );
 
-    let doctor = ok(&[
+    let untrusted = run(&[
         "integration",
         "doctor",
         "--target",
@@ -698,7 +740,61 @@ fn codex_integration_doctor_verifies_the_learning_contract() {
         "--vault",
         path(&root),
     ]);
+    assert!(!untrusted.status.success());
+    assert!(
+        String::from_utf8_lossy(&untrusted.stderr).contains("Codex project is not trusted"),
+        "unexpected doctor stderr:\n{}",
+        String::from_utf8_lossy(&untrusted.stderr)
+    );
+
+    std::fs::create_dir_all(&codex_home).expect("create CODEX_HOME");
+    std::fs::write(codex_home.join("config.toml"), "[projects\n")
+        .expect("write malformed trust config");
+    let malformed_trust = run(&[
+        "integration",
+        "doctor",
+        "--target",
+        "codex",
+        "--project",
+        path(&project),
+        "--vault",
+        path(&root),
+    ]);
+    assert!(!malformed_trust.status.success());
+    assert!(
+        String::from_utf8_lossy(&malformed_trust.stderr)
+            .contains("Codex trust configuration is unreadable or invalid"),
+        "unexpected malformed-trust stderr:\n{}",
+        String::from_utf8_lossy(&malformed_trust.stderr)
+    );
+
+    let canonical_project = std::fs::canonicalize(&project).expect("canonical project");
+    let project_key = serde_json::to_string(&canonical_project.to_string_lossy()).unwrap();
+    std::fs::write(
+        codex_home.join("config.toml"),
+        format!("[projects.{project_key}]\ntrust_level = \"trusted\"\n"),
+    )
+    .expect("write trusted project config");
+
+    let doctor = run(&[
+        "integration",
+        "doctor",
+        "--target",
+        "codex",
+        "--project",
+        path(&project),
+        "--vault",
+        path(&root),
+    ]);
+    assert!(
+        doctor.status.success(),
+        "doctor stdout:\n{}\ndoctor stderr:\n{}",
+        String::from_utf8_lossy(&doctor.stdout),
+        String::from_utf8_lossy(&doctor.stderr)
+    );
+    let doctor = String::from_utf8_lossy(&doctor.stdout);
     assert!(doctor.contains("\"healthy\": true"));
+    assert!(doctor.contains("\"projectTrusted\": true"));
     assert!(doctor.contains("\"gateReachable\": true"));
     assert!(doctor.contains("\"recordingSupported\": true"));
     assert!(doctor.contains("\"feedbackSupported\": true"));
@@ -741,6 +837,322 @@ fn codex_integration_doctor_rejects_invalid_toml_configuration() {
         ],
         "invalid host configuration",
     );
+}
+
+#[test]
+fn codex_global_install_uses_codex_home_and_pins_the_running_binary() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path().join("BrainMap");
+    let codex_home = tmp.path().join("custom-codex-home");
+    ok(&["init-vault", "--vault", path(&root), "--yes"]);
+    ok(&["index", "rebuild", "--vault", path(&root)]);
+
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_brainmap"))
+            .env("CODEX_HOME", &codex_home)
+            .args(args)
+            .output()
+            .expect("run brainmap with CODEX_HOME")
+    };
+
+    let dry_run = run(&[
+        "install",
+        "harness",
+        "--target",
+        "codex",
+        "--global",
+        "--vault",
+        path(&root),
+        "--dry-run",
+    ]);
+    assert!(
+        dry_run.status.success(),
+        "dry-run stderr:\n{}",
+        String::from_utf8_lossy(&dry_run.stderr)
+    );
+    let dry_run_stdout = String::from_utf8_lossy(&dry_run.stdout);
+    assert!(dry_run_stdout.contains(path(&codex_home.join("config.toml"))));
+    assert!(dry_run_stdout.contains(path(
+        &codex_home.join("skills/build-decision-engine/SKILL.md")
+    )));
+    assert!(!codex_home.exists(), "dry-run must not create CODEX_HOME");
+
+    let install = run(&[
+        "install",
+        "harness",
+        "--target",
+        "codex",
+        "--global",
+        "--vault",
+        path(&root),
+    ]);
+    assert!(
+        install.status.success(),
+        "install stderr:\n{}",
+        String::from_utf8_lossy(&install.stderr)
+    );
+
+    for expected in [
+        codex_home.join("skills/build-decision-engine/SKILL.md"),
+        codex_home.join("AGENTS.md"),
+        codex_home.join("config.toml"),
+        codex_home.join("hooks.json"),
+    ] {
+        assert!(expected.is_file(), "missing {}", expected.display());
+    }
+
+    let config_text =
+        std::fs::read_to_string(codex_home.join("config.toml")).expect("read Codex config");
+    let config: toml::Table = config_text.parse().expect("parse Codex config");
+    let server = config["mcp_servers"]["brainmap"]
+        .as_table()
+        .expect("Brainmap MCP table");
+    let command = server["command"].as_str().expect("MCP command");
+    assert!(std::path::Path::new(command).is_absolute());
+    assert_eq!(
+        std::fs::canonicalize(command).expect("canonical MCP command"),
+        std::fs::canonicalize(env!("CARGO_BIN_EXE_brainmap")).expect("canonical test binary")
+    );
+    assert_eq!(server["default_tools_approval_mode"].as_str(), Some("auto"));
+    assert_eq!(
+        server["tools"]["brainmap_learn_feedback"]["approval_mode"].as_str(),
+        Some("prompt")
+    );
+    assert_eq!(
+        server["tools"]["brainmap_apply_update"]["approval_mode"].as_str(),
+        Some("prompt")
+    );
+
+    let hooks: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(codex_home.join("hooks.json")).expect("read Codex hooks"),
+    )
+    .expect("parse Codex hooks");
+    let hook_commands = hooks["hooks"]
+        .as_object()
+        .expect("hooks object")
+        .values()
+        .flat_map(|entries| entries.as_array().expect("hook entries"))
+        .flat_map(|entry| entry["hooks"].as_array().expect("hook commands"))
+        .filter_map(|hook| hook["command"].as_str())
+        .collect::<Vec<_>>();
+    assert!(!hook_commands.is_empty());
+    assert!(hook_commands.iter().all(|command| {
+        command.contains(env!("CARGO_BIN_EXE_brainmap")) && !command.starts_with("brainmap ")
+    }));
+
+    let mut stale_hooks = hooks;
+    std::fs::write(
+        codex_home.join("config.toml"),
+        config_text.replace(command, "/old/brainmap"),
+    )
+    .expect("write stale Codex MCP command");
+    let pre_tool_commands = stale_hooks["hooks"]["PreToolUse"][0]["hooks"]
+        .as_array_mut()
+        .expect("pre-tool commands");
+    pre_tool_commands.push(serde_json::json!({
+        "type": "command",
+        "command": "'/old/brainmap' harness hook --host codex --event PreToolUse",
+        "timeout": 10
+    }));
+    pre_tool_commands.push(serde_json::json!({
+        "type": "command",
+        "command": "user-owned-hook"
+    }));
+    std::fs::write(
+        codex_home.join("hooks.json"),
+        serde_json::to_vec_pretty(&stale_hooks).unwrap(),
+    )
+    .expect("write stale Codex hooks");
+    let reinstall = run(&[
+        "install",
+        "harness",
+        "--target",
+        "codex",
+        "--global",
+        "--vault",
+        path(&root),
+    ]);
+    assert!(
+        reinstall.status.success(),
+        "reinstall stderr:\n{}",
+        String::from_utf8_lossy(&reinstall.stderr)
+    );
+    let reinstalled_hooks: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(codex_home.join("hooks.json")).expect("read reinstalled hooks"),
+    )
+    .expect("parse reinstalled hooks");
+    let reinstalled_text = serde_json::to_string(&reinstalled_hooks).unwrap();
+    assert!(!reinstalled_text.contains("/old/brainmap"));
+    assert!(reinstalled_text.contains("user-owned-hook"));
+
+    let doctor = run(&[
+        "integration",
+        "doctor",
+        "--target",
+        "codex",
+        "--global",
+        "--vault",
+        path(&root),
+    ]);
+    assert!(
+        doctor.status.success(),
+        "doctor stdout:\n{}\ndoctor stderr:\n{}",
+        String::from_utf8_lossy(&doctor.stdout),
+        String::from_utf8_lossy(&doctor.stderr)
+    );
+    let doctor_json: serde_json::Value =
+        serde_json::from_slice(&doctor.stdout).expect("doctor JSON");
+    assert_eq!(doctor_json["healthy"], true);
+    assert_eq!(
+        doctor_json["healthScope"],
+        "local-adapter-files-and-contract"
+    );
+    assert_eq!(doctor_json["hostHookTrustVerified"], false);
+    assert_eq!(doctor_json["hostProbeRequired"], true);
+
+    let mut tampered_hooks = reinstalled_hooks;
+    tampered_hooks["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"] =
+        serde_json::json!("/tampered/brainmap harness hook --host codex --event UserPromptSubmit");
+    std::fs::write(
+        codex_home.join("hooks.json"),
+        serde_json::to_vec_pretty(&tampered_hooks).unwrap(),
+    )
+    .expect("write tampered hooks");
+    let unhealthy = run(&[
+        "integration",
+        "doctor",
+        "--target",
+        "codex",
+        "--global",
+        "--vault",
+        path(&root),
+    ]);
+    assert!(!unhealthy.status.success());
+    assert!(
+        String::from_utf8_lossy(&unhealthy.stderr).contains("invalid host configuration"),
+        "unexpected unhealthy doctor stderr:\n{}",
+        String::from_utf8_lossy(&unhealthy.stderr)
+    );
+}
+
+#[test]
+fn codex_installer_persists_an_absolute_vault_path() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let working = tmp.path().join("working");
+    let codex_home = tmp.path().join("codex-home");
+    std::fs::create_dir_all(&working).expect("create working directory");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_brainmap"))
+        .current_dir(&working)
+        .env("CODEX_HOME", &codex_home)
+        .args([
+            "install", "harness", "--target", "codex", "--global", "--vault", "BrainMap",
+        ])
+        .output()
+        .expect("run Codex installer with relative vault");
+    assert!(
+        output.status.success(),
+        "installer stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let config: toml::Table = std::fs::read_to_string(codex_home.join("config.toml"))
+        .expect("read Codex config")
+        .parse()
+        .expect("parse Codex config");
+    let args = config["mcp_servers"]["brainmap"]["args"]
+        .as_array()
+        .expect("MCP args");
+    assert_eq!(
+        args[3].as_str(),
+        Some(working.join("BrainMap").to_string_lossy().as_ref())
+    );
+}
+
+#[test]
+fn codex_installer_preserves_a_user_owned_hook_wrapper() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path().join("BrainMap");
+    let project = tmp.path().join("project");
+    let hooks_path = project.join(".codex/hooks.json");
+    std::fs::create_dir_all(hooks_path.parent().unwrap()).expect("create Codex directory");
+    let wrapper = "/user/wrapper harness hook --host codex --event UserPromptSubmit";
+    std::fs::write(
+        &hooks_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "hooks": {
+                "UserPromptSubmit": [{
+                    "hooks": [{"type": "command", "command": wrapper}]
+                }]
+            }
+        }))
+        .unwrap(),
+    )
+    .expect("write user hook wrapper");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_brainmap"))
+        .args([
+            "install",
+            "harness",
+            "--target",
+            "codex",
+            "--project",
+            path(&project),
+            "--vault",
+            path(&root),
+        ])
+        .output()
+        .expect("run Codex project installer");
+    assert!(
+        output.status.success(),
+        "installer stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let installed = std::fs::read_to_string(hooks_path).expect("read installed hooks");
+    assert!(installed.contains(wrapper));
+}
+
+#[test]
+fn codex_installer_preflights_refusals_without_partial_changes() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path().join("BrainMap");
+    let project = tmp.path().join("project");
+    let config = project.join(".codex/config.toml");
+    std::fs::create_dir_all(config.parent().unwrap()).expect("create Codex directory");
+    let unmanaged = "[mcp_servers.brainmap]\ncommand = \"user-owned\"\n";
+    std::fs::write(&config, unmanaged).expect("write unmanaged MCP config");
+
+    for dry_run in [true, false] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_brainmap"));
+        command.args([
+            "install",
+            "harness",
+            "--target",
+            "codex",
+            "--project",
+            path(&project),
+            "--vault",
+            path(&root),
+        ]);
+        if dry_run {
+            command.arg("--dry-run");
+        }
+        let output = command.output().expect("run refusing Codex installer");
+        assert!(!output.status.success(), "dry_run={dry_run}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("unmanaged Brainmap MCP table"),
+            "dry_run={dry_run}, stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), unmanaged);
+        assert!(!project.join("AGENTS.md").exists());
+        assert!(!project.join(".codex/hooks.json").exists());
+        assert!(
+            !project
+                .join(".codex/skills/build-decision-engine/SKILL.md")
+                .exists()
+        );
+    }
 }
 
 #[test]
@@ -836,13 +1248,162 @@ fn codex_mcp_adapter_completes_the_learning_lifecycle() {
         assert_eq!(applied["applied"], true);
 
         let changed = call("brainmap_decision_gate", gate_arguments);
-        assert_eq!(changed["selectedOption"], "pnpm");
+        assert_eq!(changed["outcome"], "ask_user");
+        assert_eq!(changed["selectedOption"], serde_json::Value::Null);
+        assert_eq!(changed["predictedOutcome"], "proceed");
+        assert_eq!(changed["predictedSelectedOption"], "pnpm");
         assert_eq!(changed["ruleScope"], "project:codex-mcp");
     }
 
     drop(stdin);
     let status = child.wait().expect("wait for MCP adapter");
     assert!(status.success());
+}
+
+#[test]
+fn autopilot_enable_uses_the_promotion_gate() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path().join("BrainMap");
+    ok(&["init-vault", "--vault", path(&root), "--yes"]);
+    ok(&["index", "rebuild", "--vault", path(&root)]);
+
+    fails(
+        &[
+            "autopilot",
+            "enable",
+            "--level",
+            "conservative",
+            "--vault",
+            path(&root),
+        ],
+        "promotion denied",
+    );
+    let status = ok(&["autopilot", "status", "--vault", path(&root)]);
+    let status: serde_json::Value = serde_json::from_str(&status).expect("autopilot status JSON");
+    assert_eq!(status["mode"], "shadow");
+    assert_eq!(status["level"], "conservative");
+}
+
+#[test]
+fn confirmed_collision_feedback_requires_a_candidate_collision() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path().join("BrainMap");
+    ok(&["init-vault", "--vault", path(&root), "--yes"]);
+    ok(&["index", "rebuild", "--vault", path(&root)]);
+    ok(&[
+        "learn-decision",
+        "--situation",
+        "Choose primary formatter for collision project",
+        "--options",
+        "biome|prettier",
+        "--chosen",
+        "biome",
+        "--rejected",
+        "prettier",
+        "--decision-type",
+        "tooling",
+        "--scope",
+        "project:collision",
+        "--vault",
+        path(&root),
+    ]);
+    ok(&[
+        "learn-decision",
+        "--situation",
+        "Choose preferred formatter for collision project",
+        "--options",
+        "biome|prettier",
+        "--chosen",
+        "prettier",
+        "--rejected",
+        "biome",
+        "--decision-type",
+        "tooling",
+        "--scope",
+        "project:collision",
+        "--vault",
+        path(&root),
+    ]);
+    ok(&["apply", "--pending", "--yes", "--vault", path(&root)]);
+
+    let collision = ok(&[
+        "gate",
+        "--json",
+        "--intent",
+        "would-ask-user",
+        "--situation",
+        "Choose formatter for collision project",
+        "--options",
+        "biome|prettier",
+        "--risk",
+        "low",
+        "--reversible",
+        "true",
+        "--decision-type",
+        "tooling",
+        "--scope",
+        "project:collision",
+        "--vault",
+        path(&root),
+    ]);
+    let collision: serde_json::Value =
+        serde_json::from_str(&collision).expect("collision gate JSON");
+    assert_eq!(
+        collision["candidateCollision"], true,
+        "unexpected collision response: {collision:#}"
+    );
+    ok(&[
+        "learn-feedback",
+        "--decision-id",
+        collision["decisionId"]
+            .as_str()
+            .expect("collision decision id"),
+        "--correction",
+        "Ask when the learned choice is unavailable",
+        "--incident",
+        "confirmed-collision",
+        "--vault",
+        path(&root),
+    ]);
+
+    let ordinary = ok(&[
+        "gate",
+        "--json",
+        "--intent",
+        "would-ask-user",
+        "--situation",
+        "Choose an unrelated unlearned editor",
+        "--options",
+        "vim|helix",
+        "--risk",
+        "low",
+        "--reversible",
+        "true",
+        "--decision-type",
+        "tooling",
+        "--scope",
+        "project:collision",
+        "--vault",
+        path(&root),
+    ]);
+    let ordinary: serde_json::Value = serde_json::from_str(&ordinary).expect("ordinary gate JSON");
+    assert_eq!(ordinary["candidateCollision"], false);
+    fails(
+        &[
+            "learn-feedback",
+            "--decision-id",
+            ordinary["decisionId"]
+                .as_str()
+                .expect("ordinary decision id"),
+            "--correction",
+            "Ask about this decision",
+            "--incident",
+            "confirmed-collision",
+            "--vault",
+            path(&root),
+        ],
+        "confirmed-collision incident requires a candidate collision",
+    );
 }
 
 #[test]
@@ -918,11 +1479,11 @@ fn concurrent_processes_preserve_ledgers_ids_capture_and_feedback() {
     let gate_ids = events
         .iter()
         .filter(|event| event["kind"] == "decision-gate")
-        .take(8)
+        .take(16)
         .filter_map(|event| event["id"].as_str())
         .map(str::to_string)
         .collect::<Vec<_>>();
-    assert_eq!(gate_ids.len(), 8);
+    assert_eq!(gate_ids.len(), 16);
 
     let mut learning_children = Vec::new();
     for (index, decision_id) in gate_ids.iter().enumerate() {
@@ -973,7 +1534,7 @@ fn concurrent_processes_preserve_ledgers_ids_capture_and_feedback() {
         .map(serde_json::from_str::<serde_json::Value>)
         .collect::<serde_json::Result<Vec<_>>>()
         .expect("every capture line is complete JSON");
-    assert_eq!(captures.len(), 8);
+    assert_eq!(captures.len(), 16);
     let capture_ids = captures
         .iter()
         .filter_map(|event| event["id"].as_str())
@@ -986,7 +1547,7 @@ fn concurrent_processes_preserve_ledgers_ids_capture_and_feedback() {
         .filter_map(Result::ok)
         .filter(|entry| entry.path().extension().and_then(|value| value.to_str()) == Some("json"))
         .count();
-    assert_eq!(pending, 8);
+    assert_eq!(pending, 16);
 
     ok(&["apply", "--pending", "--yes", "--vault", path(&root)]);
     let applied = std::fs::read_dir(&packet_dir)
@@ -1005,7 +1566,7 @@ fn concurrent_processes_preserve_ledgers_ids_capture_and_feedback() {
             .expect("parse applied packet")
         })
         .collect::<Vec<_>>();
-    assert_eq!(applied.len(), 8);
+    assert_eq!(applied.len(), 16);
     for packet in applied {
         let packet_id = packet["id"].as_str().expect("applied packet id");
         let note = root
@@ -1100,7 +1661,11 @@ fn concurrent_update_processes_apply_a_packet_at_most_once() {
         path(&root),
         "--dry-run",
     ]);
-    assert!(gate.contains("\"selectedOption\": \"biome\""));
+    let gate: serde_json::Value = serde_json::from_str(&gate).expect("parse learned gate");
+    assert_eq!(gate["outcome"], "ask_user");
+    assert_eq!(gate["selectedOption"], serde_json::Value::Null);
+    assert_eq!(gate["predictedOutcome"], "proceed");
+    assert_eq!(gate["predictedSelectedOption"], "biome");
 }
 
 #[test]
@@ -1227,7 +1792,10 @@ sensitivity: personal
         .iter()
         .map(|(situation, options, expected)| {
             let result = evaluate(&root, situation, options);
-            assert_eq!(result["selectedOption"], *expected);
+            assert_eq!(result["outcome"], "ask_user");
+            assert_eq!(result["selectedOption"], serde_json::Value::Null);
+            assert_eq!(result["predictedOutcome"], "proceed");
+            assert_eq!(result["predictedSelectedOption"], *expected);
             result
         })
         .collect::<Vec<_>>();
@@ -1246,10 +1814,15 @@ sensitivity: personal
 
     for ((situation, options, expected), baseline) in requests.iter().zip(before) {
         let result = evaluate(&restored, situation, options);
-        assert_eq!(result["selectedOption"], *expected);
+        assert_eq!(result["outcome"], "ask_user");
+        assert_eq!(result["selectedOption"], serde_json::Value::Null);
+        assert_eq!(result["predictedOutcome"], "proceed");
+        assert_eq!(result["predictedSelectedOption"], *expected);
         for field in [
             "outcome",
+            "predictedOutcome",
             "selectedOption",
+            "predictedSelectedOption",
             "rejectedOptions",
             "confidence",
             "ruleId",

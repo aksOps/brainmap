@@ -197,6 +197,10 @@ pub fn verify_export_cmd(args: VerifyExportArgs) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn verify_export_archive(file: &Path, identity: Option<&Path>) -> Result<()> {
+    verify_archive(file, identity).map(|_| ())
+}
+
 #[derive(Debug)]
 struct VerifiedArchive {
     manifest: Manifest,

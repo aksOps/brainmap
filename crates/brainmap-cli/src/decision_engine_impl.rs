@@ -1,17 +1,84 @@
 use crate::decision_engine::{DecisionRequest as GateInput, DecisionResult as GateResponse};
 use crate::{index, learning, privacy, util};
-use anyhow::Result;
+use anyhow::{Result, bail};
 use serde_json::json;
 use std::path::Path;
 use std::time::Instant;
 
 pub(crate) fn evaluate_internal(root: &Path, input: GateInput) -> Result<GateResponse> {
+    if input.dry_run {
+        let active_run = crate::dogfood::active_run_context_for_gate(root)?;
+        return evaluate_with_context(root, input, active_run).map(|(response, _, _)| response);
+    }
+
+    let ledger_path = root.join("90-calibration/decision-ledger.jsonl");
+    for _ in 0..3 {
+        let evaluated_run = crate::dogfood::active_run_context_for_gate(root)?;
+        let (response, event, evaluated_provenance) =
+            evaluate_with_context(root, input.clone(), evaluated_run.clone())?;
+        let mut ledger = util::lock_jsonl(&ledger_path)?;
+        let append_run = crate::dogfood::active_run_context_for_gate(root)?;
+        if append_run != evaluated_run {
+            drop(ledger);
+            continue;
+        }
+        if append_run.is_some() {
+            let Some(expected_provenance) = &evaluated_provenance else {
+                drop(ledger);
+                continue;
+            };
+            if crate::dogfood::capture_gate_provenance_version(root)? != *expected_provenance {
+                drop(ledger);
+                continue;
+            }
+        }
+        ledger.append(
+            event
+                .as_ref()
+                .expect("recorded gate must create a ledger event"),
+        )?;
+        return Ok(response);
+    }
+    bail!("dogfood run state changed repeatedly while recording the gate; retry the decision")
+}
+
+fn evaluate_with_context(
+    root: &Path,
+    input: GateInput,
+    active_run: Option<crate::dogfood::DogfoodRunContext>,
+) -> Result<(
+    GateResponse,
+    Option<serde_json::Value>,
+    Option<crate::dogfood::GateProvenanceVersion>,
+)> {
     let evaluation_started = Instant::now();
+    let provenance_before = active_run
+        .as_ref()
+        .map(|_| crate::dogfood::capture_gate_provenance_version(root))
+        .transpose()?;
     let combined = privacy::redact(&input.combined());
     let lower = combined.to_lowercase();
     let decision_id = util::id("dec", &combined);
     let autopilot = learning::autopilot_config(root);
     let configured_gate_mode = learning::gate_mode_config(root);
+    let provenance_after = active_run
+        .as_ref()
+        .map(|_| crate::dogfood::capture_gate_provenance_version(root))
+        .transpose()?;
+    if provenance_before != provenance_after {
+        bail!("active dogfood gate provenance changed during evaluation");
+    }
+    if let Some(run) = &active_run {
+        crate::dogfood::validate_gate_provenance_snapshot(
+            run,
+            &configured_gate_mode,
+            &autopilot,
+            provenance_after
+                .as_ref()
+                .expect("active dogfood run must have provenance"),
+        )?;
+    }
+    let dogfood_run_id = active_run.as_ref().map(|run| run.run_id.clone());
     let threshold = autopilot.threshold;
     let learned_resolution = index::resolve_decision_rule(
         root,
@@ -231,7 +298,20 @@ pub(crate) fn evaluate_internal(root: &Path, input: GateInput) -> Result<GateRes
         summary.push("Configured confidence threshold forced ask_user.".into());
     }
 
-    if (std::env::var("BRAINMAP_DISABLE_AUTOPILOT").ok().as_deref() == Some("1")
+    let predicted_outcome = outcome.clone();
+    let predicted_selected = selected.clone();
+    let shadow_mode = configured_gate_mode == "shadow" || autopilot.mode == "shadow";
+
+    if shadow_mode && matches!(outcome.as_str(), "proceed" | "ask_user") {
+        if outcome == "proceed" {
+            outcome = "ask_user".into();
+            recommendation =
+                "Shadow mode requires an independent user choice before proceeding.".into();
+        }
+        selected = None;
+        risk_tier = "ask_before_action".into();
+        summary.push("Shadow mode recorded the prediction without enforcing its choice.".into());
+    } else if (std::env::var("BRAINMAP_DISABLE_AUTOPILOT").ok().as_deref() == Some("1")
         || matches!(
             std::env::var("BRAINMAP_GATE_MODE").ok().as_deref(),
             Some("ask-always" | "suggest-only")
@@ -265,12 +345,14 @@ pub(crate) fn evaluate_internal(root: &Path, input: GateInput) -> Result<GateRes
     } else {
         None
     };
-    let learning_chosen = selected.clone();
+    let learning_chosen = predicted_selected.clone();
     let response = GateResponse {
         decision_id: decision_id.clone(),
         outcome: outcome.clone(),
+        predicted_outcome: predicted_outcome.clone(),
         recommendation,
         selected_option: selected,
+        predicted_selected_option: predicted_selected,
         rejected_options: rejected,
         confidence,
         rule_id,
@@ -286,6 +368,9 @@ pub(crate) fn evaluate_internal(root: &Path, input: GateInput) -> Result<GateRes
         restrictions_applied: restrictions,
         ask_user_question: question,
         default_if_no_answer,
+        gate_mode: configured_gate_mode.clone(),
+        autopilot_mode: autopilot.mode.clone(),
+        dogfood_run_id,
         learning_event: json!({
             "shouldRecord": !input.dry_run,
             "kind": "decision-gate",
@@ -294,47 +379,56 @@ pub(crate) fn evaluate_internal(root: &Path, input: GateInput) -> Result<GateRes
             "confidence": confidence
         }),
     };
-    if !input.dry_run {
-        let ledger = root.join("90-calibration/decision-ledger.jsonl");
-        util::append_jsonl(
-            &ledger,
-            &json!({
-                "id": decision_id,
-                "createdAt": util::now_iso(),
-                "kind": "decision-gate",
-                "outcome": outcome,
-                "confidence": confidence,
-                "intent": privacy::redact(&input.intent),
-                "situation": privacy::redact(&input.situation),
-                "options": input
-                    .options
-                    .iter()
-                    .map(|option| privacy::redact(option))
-                    .collect::<Vec<_>>(),
-                "proposedAction": privacy::redact(&input.proposed_action),
-                "risk": privacy::redact(&input.risk),
-                "reversible": input.reversible,
-                "decisionType": privacy::redact(&input.decision_type),
-                "scope": privacy::redact(&input.scope),
-                "selectedOption": response.selected_option.as_deref().map(privacy::redact),
-                "rejectedOptions": response
-                    .rejected_options
-                    .iter()
-                    .map(|option| privacy::redact(option))
-                    .collect::<Vec<_>>(),
-                "ruleId": response.rule_id.clone(),
-                "ruleScope": response.rule_scope.clone(),
-                "matchScore": response.match_score,
-                "matchKind": response.match_kind.clone(),
-                "matchMargin": response.match_margin,
-                "candidateCollision": response.candidate_collision,
-                "evaluationLatencyMicros": evaluation_started.elapsed().as_micros(),
-                "appliedPolicies": response.applied_policies.clone(),
-                "restrictionsApplied": response.restrictions_applied.clone()
-            }),
-        )?;
-    }
-    Ok(response)
+    let event = (!input.dry_run).then(|| {
+        json!({
+            "id": decision_id,
+            "createdAt": util::now_iso(),
+            "kind": "decision-gate",
+            "outcome": outcome,
+            "predictedOutcome": response.predicted_outcome,
+            "confidence": confidence,
+            "intent": privacy::redact(&input.intent),
+            "situation": privacy::redact(&input.situation),
+            "options": input
+                .options
+                .iter()
+                .map(|option| privacy::redact(option))
+                .collect::<Vec<_>>(),
+            "proposedAction": privacy::redact(&input.proposed_action),
+            "risk": privacy::redact(&input.risk),
+            "reversible": input.reversible,
+            "decisionType": privacy::redact(&input.decision_type),
+            "scope": privacy::redact(&input.scope),
+            "selectedOption": response.selected_option.as_deref().map(privacy::redact),
+            "predictedSelectedOption": response
+                .predicted_selected_option
+                .as_deref()
+                .map(privacy::redact),
+            "rejectedOptions": response
+                .rejected_options
+                .iter()
+                .map(|option| privacy::redact(option))
+                .collect::<Vec<_>>(),
+            "ruleId": response.rule_id.clone(),
+            "ruleScope": response.rule_scope.clone(),
+            "matchScore": response.match_score,
+            "matchKind": response.match_kind.clone(),
+            "matchMargin": response.match_margin,
+            "candidateCollision": response.candidate_collision,
+            "gateMode": response.gate_mode,
+            "autopilotMode": response.autopilot_mode,
+            "autopilotLevel": autopilot.level,
+            "dogfoodRunId": response.dogfood_run_id,
+            "dogfoodThreshold": active_run.as_ref().map(|run| run.threshold),
+            "dogfoodCandidateBinarySha256": active_run
+                .as_ref()
+                .map(|run| run.candidate_binary_sha256.as_str()),
+            "evaluationLatencyMicros": evaluation_started.elapsed().as_micros(),
+            "appliedPolicies": response.applied_policies.clone(),
+            "restrictionsApplied": response.restrictions_applied.clone()
+        })
+    });
+    Ok((response, event, provenance_after))
 }
 
 fn hard_no(lower: &str) -> bool {
@@ -418,6 +512,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("BrainMap");
         vault::init_vault(Some(root.clone()), false, true).unwrap();
+        crate::learning::autopilot_set(Some(root.clone()), "conservative", "conservative", None)
+            .unwrap();
+        crate::learning::gate_mode(Some(root.clone()), "active").unwrap();
         index::rebuild(&root).unwrap();
         (tmp, root)
     }
@@ -447,6 +544,159 @@ mod tests {
         .unwrap();
         assert_eq!(res.outcome, "proceed");
         assert_eq!(res.selected_option.as_deref(), Some("Markdown+JSONL"));
+    }
+
+    #[test]
+    fn shadow_mode_reports_proceed_prediction_without_enforcing_it() {
+        let (_tmp, root) = temp_vault();
+        crate::learning::autopilot_set(Some(root.clone()), "shadow", "conservative", None).unwrap();
+        crate::learning::gate_mode(Some(root.clone()), "shadow").unwrap();
+        let res = evaluate(
+            &root,
+            GateInput {
+                intent: "would-ask-user".into(),
+                situation: "Choose v1 storage".into(),
+                options: vec![
+                    "Markdown+JSONL".into(),
+                    "SQLite".into(),
+                    "External Vector DB".into(),
+                ],
+                proposed_action: String::new(),
+                risk: "low".into(),
+                reversible: Some(true),
+                decision_type: "architecture".into(),
+                scope: "global".into(),
+                agent_confidence: None,
+                dry_run: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(res.predicted_outcome, "proceed");
+        assert_eq!(
+            res.predicted_selected_option.as_deref(),
+            Some("Markdown+JSONL")
+        );
+        assert_eq!(res.outcome, "ask_user");
+        assert_eq!(res.selected_option, None);
+        assert_eq!(res.gate_mode, "shadow");
+        assert_eq!(res.autopilot_mode, "shadow");
+        assert_eq!(res.dogfood_run_id, None);
+    }
+
+    #[test]
+    fn active_dogfood_run_tags_shadow_response_and_ledger() {
+        let (_tmp, root) = temp_vault();
+        crate::learning::autopilot_set(Some(root.clone()), "shadow", "conservative", None).unwrap();
+        crate::learning::gate_mode(Some(root.clone()), "shadow").unwrap();
+        let ledger = root.join("90-calibration/decision-ledger.jsonl");
+        let boundary = fs::metadata(&ledger)
+            .map(|metadata| metadata.len())
+            .unwrap_or(0);
+        let started_at = chrono::Utc::now();
+        let candidate_binary_sha256 = crate::qualification::running_candidate_hashes()
+            .unwrap()
+            .brainmap_sha256;
+        let candidate_binary_identity = crate::dogfood::current_binary_identity().unwrap();
+        util::write_atomic(
+            &root.join(".brainmap/dogfood.json"),
+            serde_json::to_vec_pretty(&json!({
+                "format": "brainmap-dogfood-runs",
+                "version": 3,
+                "runs": [{
+                    "runId": "dogfood_test_run",
+                    "status": "active",
+                    "candidateCommit": "1111111111111111111111111111111111111111",
+                    "candidateBinarySha256": candidate_binary_sha256,
+                    "candidateBrainmapdSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                    "candidateBinaryIdentity": candidate_binary_identity,
+                    "host": { "os": std::env::consts::OS, "arch": std::env::consts::ARCH },
+                    "adapter": "codex",
+                    "startedAt": started_at,
+                    "mode": "shadow",
+                    "gateMode": "shadow",
+                    "autopilotMode": "shadow",
+                    "autopilotLevel": "conservative",
+                    "threshold": 0.82,
+                    "startBackup": { "relativePath": "99-meta/backups/dogfood_test_run-start.brainmap.tar.zst", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+                    "qualificationBundleSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                    "qualificationManifestSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                    "qualificationBundleRelativePath": ".brainmap/dogfood/dogfood_test_run/qualification",
+                    "ledgerBoundaryBytes": boundary,
+                    "ledgerBoundaryLines": 0,
+                    "ledgerBoundarySha256": util::sha256_hex(&fs::read(&ledger).unwrap_or_default())
+                }]
+            }))
+            .unwrap()
+            .as_slice(),
+        )
+        .unwrap();
+
+        let res = evaluate(
+            &root,
+            GateInput {
+                intent: "would-ask-user".into(),
+                situation: "Choose v1 storage".into(),
+                options: vec!["Markdown+JSONL".into(), "SQLite".into()],
+                proposed_action: String::new(),
+                risk: "low".into(),
+                reversible: Some(true),
+                decision_type: "architecture".into(),
+                scope: "global".into(),
+                agent_confidence: None,
+                dry_run: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(res.dogfood_run_id.as_deref(), Some("dogfood_test_run"));
+        let ledger = fs::read_to_string(ledger).unwrap();
+        let event: serde_json::Value =
+            serde_json::from_str(ledger.lines().last().unwrap()).unwrap();
+        assert_eq!(event["dogfoodRunId"], "dogfood_test_run");
+        assert_eq!(event["predictedOutcome"], "proceed");
+        assert_eq!(event["predictedSelectedOption"], "Markdown+JSONL");
+        assert_eq!(event["outcome"], "ask_user");
+        assert_eq!(event["selectedOption"], serde_json::Value::Null);
+        assert_eq!(event["gateMode"], "shadow");
+        assert_eq!(event["autopilotMode"], "shadow");
+    }
+
+    #[test]
+    fn shadow_false_proceed_feedback_validates_against_the_prediction() {
+        let (_tmp, root) = temp_vault();
+        crate::learning::autopilot_set(Some(root.clone()), "shadow", "conservative", None).unwrap();
+        crate::learning::gate_mode(Some(root.clone()), "shadow").unwrap();
+        let response = evaluate(
+            &root,
+            GateInput {
+                intent: "would-ask-user".into(),
+                situation: "Choose v1 storage".into(),
+                options: vec!["Markdown+JSONL".into(), "SQLite".into()],
+                proposed_action: String::new(),
+                risk: "low".into(),
+                reversible: Some(true),
+                decision_type: "architecture".into(),
+                scope: "global".into(),
+                agent_confidence: None,
+                dry_run: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(response.predicted_outcome, "proceed");
+        assert_eq!(response.outcome, "ask_user");
+
+        let packet = crate::learning::learn_feedback_quiet(crate::cli::LearnFeedbackArgs {
+            decision_id: response.decision_id,
+            correction: None,
+            chosen: Some("SQLite".into()),
+            rejected: Some("Markdown+JSONL".into()),
+            incident: Some(crate::cli::FeedbackIncident::FalseProceed),
+            vault: Some(root),
+        })
+        .unwrap();
+
+        assert!(packet.is_some());
     }
 
     #[test]

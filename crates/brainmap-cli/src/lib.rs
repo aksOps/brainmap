@@ -1,8 +1,10 @@
 mod bench;
+pub mod build_info;
 mod cli;
 mod context;
 pub mod decision_engine;
 mod decision_engine_impl;
+mod dogfood;
 mod eval;
 mod export;
 mod gate;
@@ -15,6 +17,7 @@ mod mcp;
 mod model;
 mod onboarding;
 mod privacy;
+pub mod qualification;
 mod skill;
 mod snapshot;
 mod util;

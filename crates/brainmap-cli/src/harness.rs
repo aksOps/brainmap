@@ -327,6 +327,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("BrainMap");
         crate::vault::init_vault(Some(root.clone()), false, true).unwrap();
+        crate::learning::autopilot_set(Some(root.clone()), "conservative", "conservative", None)
+            .unwrap();
+        crate::learning::gate_mode(Some(root.clone()), "active").unwrap();
         crate::index::rebuild(&root).unwrap();
 
         let routine = gate::evaluate(
@@ -367,8 +370,10 @@ mod tests {
         let advice = user_prompt_advice(&gate::GateResponse {
             decision_id: "dec_test".into(),
             outcome: "ask_user".into(),
+            predicted_outcome: "ask_user".into(),
             recommendation: "Ask before proceeding.".into(),
             selected_option: None,
+            predicted_selected_option: None,
             rejected_options: vec![],
             confidence: 0.56,
             rule_id: None,
@@ -384,6 +389,9 @@ mod tests {
             restrictions_applied: vec![],
             ask_user_question: Some("Which path should I take?".into()),
             default_if_no_answer: None,
+            gate_mode: "active".into(),
+            autopilot_mode: "conservative".into(),
+            dogfood_run_id: None,
             learning_event: serde_json::json!({}),
         })
         .unwrap();

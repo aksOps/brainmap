@@ -114,6 +114,23 @@ jq \
       end
     )
   | walk(
+      if type == "object"
+         and has("author")
+         and (.author | type) == "string" then
+        .author |= (
+          gsub("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z]{2,}"; "")
+          | gsub("[<>]"; "")
+          | gsub(" *, *"; ", ")
+          | gsub(" +"; " ")
+          | sub("^ +"; "")
+          | sub(" +$"; "")
+        )
+        | if .author == "" then del(.author) else . end
+      else
+        .
+      end
+    )
+  | walk(
       if type == "string" then
         replace_prefix($raw_vendor_ref; $vendor_ref)
         | replace_prefix($raw_root_ref; $stable_ref)
@@ -147,5 +164,10 @@ jq -e \
 
 if rg -n 'path\+file://|file://[^.#]|/(home|opt)/[^" ]+' "${sbom}"; then
   echo "generated SBOM contains a local filesystem path" >&2
+  exit 1
+fi
+
+if rg -n '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "${sbom}"; then
+  echo "generated SBOM contains an author email address" >&2
   exit 1
 fi

@@ -13,6 +13,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    #[command(name = "build-info")]
+    BuildInfo,
     Start {
         #[arg(long)]
         vault: Option<PathBuf>,
@@ -33,6 +35,7 @@ enum Command {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Command::BuildInfo => brainmap_cli::build_info::print_build_info()?,
         Command::Start { vault, host, port } => {
             brainmap_cli::web::serve(vault, &host, port, false)?
         }

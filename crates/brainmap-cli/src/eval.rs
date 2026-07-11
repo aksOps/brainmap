@@ -48,6 +48,14 @@ struct Case {
         deserialize_with = "deserialize_expected_choice"
     )]
     expected_choice: ExpectedChoice,
+    #[serde(default, rename = "expectedPredictedOutcome")]
+    expected_predicted_outcome: Option<String>,
+    #[serde(
+        default,
+        rename = "expectedPredictedChoice",
+        deserialize_with = "deserialize_expected_choice"
+    )]
+    expected_predicted_choice: ExpectedChoice,
     #[serde(rename = "mustAskUser")]
     must_ask_user: Option<bool>,
     #[serde(default, rename = "expectedLearnedRule")]
@@ -126,10 +134,8 @@ fn seed_status() -> String {
 }
 
 pub fn run(args: EvalArgs) -> Result<()> {
-    let root = vault::resolve_vault(args.vault);
-    if !index::db_path(&root).exists() {
-        index::rebuild(&root)?;
-    }
+    let _requested_root = vault::resolve_vault(args.vault);
+    let (_baseline_temp, baseline_root) = prepare_baseline_vault()?;
     let mut cases = Vec::new();
     for entry in fs::read_dir(&args.suite)? {
         let path = entry?.path();
@@ -154,10 +160,12 @@ pub fn run(args: EvalArgs) -> Result<()> {
     let mut wrong_choice = 0usize;
     let mut wrong_rule = 0usize;
     let mut wrong_metadata = 0usize;
+    let mut wrong_prediction = 0usize;
     let mut outcome_mismatches = Vec::new();
     let mut choice_mismatches = Vec::new();
     let mut rule_mismatches = Vec::new();
     let mut metadata_mismatches = Vec::new();
+    let mut prediction_mismatches = Vec::new();
     let mut expected_asks = 0usize;
     let mut ids = Vec::new();
     let mut reasons = Vec::new();
@@ -176,7 +184,7 @@ pub fn run(args: EvalArgs) -> Result<()> {
         let case_root = case_vault
             .as_ref()
             .map(|(_, root)| root.as_path())
-            .unwrap_or(root.as_path());
+            .unwrap_or(baseline_root.as_path());
         ids.push(case.id.clone());
         if case.must_ask_user.unwrap_or(false) {
             expected_asks += 1;
@@ -232,6 +240,34 @@ pub fn run(args: EvalArgs) -> Result<()> {
                 choice_mismatches.push(format!(
                     "{}: selectedOption expected null, got {:?}",
                     case.id, res.selected_option
+                ));
+            }
+            _ => {}
+        }
+        if let Some(expected) = &case.expected_predicted_outcome
+            && &res.predicted_outcome != expected
+        {
+            wrong_prediction += 1;
+            prediction_mismatches.push(format!(
+                "{}: predictedOutcome expected {:?}, got {:?}",
+                case.id, expected, res.predicted_outcome
+            ));
+        }
+        match &case.expected_predicted_choice {
+            ExpectedChoice::Selection(expected)
+                if res.predicted_selected_option.as_ref() != Some(expected) =>
+            {
+                wrong_prediction += 1;
+                prediction_mismatches.push(format!(
+                    "{}: predictedSelectedOption expected {:?}, got {:?}",
+                    case.id, expected, res.predicted_selected_option
+                ));
+            }
+            ExpectedChoice::NoSelection if res.predicted_selected_option.is_some() => {
+                wrong_prediction += 1;
+                prediction_mismatches.push(format!(
+                    "{}: predictedSelectedOption expected null, got {:?}",
+                    case.id, res.predicted_selected_option
                 ));
             }
             _ => {}
@@ -320,10 +356,12 @@ pub fn run(args: EvalArgs) -> Result<()> {
         "wrongChoice": wrong_choice,
         "wrongRule": wrong_rule,
         "wrongMetadata": wrong_metadata,
+        "wrongPrediction": wrong_prediction,
         "outcomeMismatches": outcome_mismatches,
         "choiceMismatches": choice_mismatches,
         "ruleMismatches": rule_mismatches,
         "metadataMismatches": metadata_mismatches,
+        "predictionMismatches": prediction_mismatches,
         "learnedRuleRecall": {
             "exact": ratio(exact_correct, exact_expected),
             "exactCorrect": exact_correct,
@@ -343,8 +381,13 @@ pub fn run(args: EvalArgs) -> Result<()> {
         "reasons": reasons
     });
     println!("{}", serde_json::to_string_pretty(&report)?);
-    let failures =
-        false_proceed + false_ask + false_block + wrong_choice + wrong_rule + wrong_metadata;
+    let failures = false_proceed
+        + false_ask
+        + false_block
+        + wrong_choice
+        + wrong_rule
+        + wrong_metadata
+        + wrong_prediction;
     if failures > 0 {
         bail!(
             "evaluation contract failed with {failures} mismatched outcome, choice, or rule assertion(s)"
@@ -383,6 +426,8 @@ fn expand_negative_matrix(matrix: NegativeCaseMatrix) -> Result<Vec<Case>> {
                     proposed_action: None,
                     expected_outcome: "ask_user".into(),
                     expected_choice: ExpectedChoice::NoSelection,
+                    expected_predicted_outcome: None,
+                    expected_predicted_choice: ExpectedChoice::Unspecified,
                     must_ask_user: Some(true),
                     expected_learned_rule: Some(false),
                     expected_candidate_collision: None,
@@ -413,6 +458,24 @@ fn ratio(correct: usize, expected: usize) -> f64 {
     } else {
         correct as f64 / expected as f64
     }
+}
+
+fn prepare_baseline_vault() -> Result<(tempfile::TempDir, PathBuf)> {
+    let temp = tempfile::tempdir()?;
+    let root = temp.path().join("BrainMap");
+    vault::init_vault_quiet(Some(root.clone()), true)?;
+    util::write_atomic(
+        &root.join(".brainmap/autopilot.json"),
+        serde_json::to_vec_pretty(&json!({
+            "mode": "conservative",
+            "level": "conservative",
+            "threshold": 0.82
+        }))?
+        .as_slice(),
+    )?;
+    util::write_atomic(&root.join(".brainmap/gate-mode"), b"active")?;
+    index::rebuild(&root)?;
+    Ok((temp, root))
 }
 
 fn prepare_case_vault(case: &Case, setup: &CaseSetup) -> Result<(tempfile::TempDir, PathBuf)> {
@@ -456,20 +519,25 @@ fn prepare_case_vault(case: &Case, setup: &CaseSetup) -> Result<(tempfile::TempD
             )?;
         }
     }
-    if setup.autopilot_mode.is_some() || setup.threshold.is_some() {
-        util::write_atomic(
-            &root.join(".brainmap/autopilot.json"),
-            serde_json::to_vec_pretty(&json!({
-                "mode": setup.autopilot_mode.as_deref().unwrap_or("shadow"),
-                "level": if setup.autopilot_mode.as_deref() == Some("disabled") { "off" } else { "conservative" },
-                "threshold": setup.threshold.unwrap_or(0.82)
-            }))?
-            .as_slice(),
-        )?;
-    }
-    if let Some(mode) = &setup.gate_mode {
-        util::write_atomic(&root.join(".brainmap/gate-mode"), mode.as_bytes())?;
-    }
+    let autopilot_mode = setup.autopilot_mode.as_deref().unwrap_or("conservative");
+    let autopilot_level = match autopilot_mode {
+        "disabled" => "off",
+        "balanced" => "balanced",
+        _ => "conservative",
+    };
+    util::write_atomic(
+        &root.join(".brainmap/autopilot.json"),
+        serde_json::to_vec_pretty(&json!({
+            "mode": autopilot_mode,
+            "level": autopilot_level,
+            "threshold": setup.threshold.unwrap_or(0.82)
+        }))?
+        .as_slice(),
+    )?;
+    util::write_atomic(
+        &root.join(".brainmap/gate-mode"),
+        setup.gate_mode.as_deref().unwrap_or("active").as_bytes(),
+    )?;
     index::rebuild(&root)?;
     Ok((temp, root))
 }
@@ -496,5 +564,51 @@ mod tests {
             parse_case(r#", "expectedChoice":"A""#).expected_choice,
             ExpectedChoice::Selection("A".into())
         );
+    }
+
+    #[test]
+    fn prepared_eval_case_defaults_to_active_enforcement() {
+        let case = parse_case("");
+        let setup = CaseSetup {
+            gate_mode: None,
+            autopilot_mode: None,
+            threshold: None,
+            learned_decisions: Vec::new(),
+        };
+
+        let (_temp, root) = prepare_case_vault(&case, &setup).unwrap();
+
+        assert_eq!(crate::learning::gate_mode_config(&root), "active");
+        assert_eq!(
+            crate::learning::autopilot_config(&root).mode,
+            "conservative"
+        );
+    }
+
+    #[test]
+    fn baseline_eval_vault_runs_seed_policies_in_active_mode() {
+        let (_temp, root) = prepare_baseline_vault().unwrap();
+
+        let result = gate::evaluate(
+            &root,
+            gate::GateInput {
+                intent: "would-ask-user".into(),
+                situation: "Choose v1 storage".into(),
+                options: vec!["Markdown+JSONL".into(), "SQLite".into()],
+                proposed_action: String::new(),
+                risk: "low".into(),
+                reversible: Some(true),
+                decision_type: "architecture".into(),
+                scope: "global".into(),
+                agent_confidence: None,
+                dry_run: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result.outcome, "proceed");
+        assert_eq!(result.selected_option.as_deref(), Some("Markdown+JSONL"));
+        assert_eq!(result.gate_mode, "active");
+        assert_eq!(result.autopilot_mode, "conservative");
     }
 }

@@ -244,7 +244,7 @@ fn call_tool(root: &Path, name: &str, args: Value) -> Result<Value> {
         "brainmap_preview_update" => {
             let packet_id =
                 string_arg(&args, "packetId").context("preview update requires packetId")?;
-            learning::pending_updates_value(root, Some(&packet_id))?
+            learning::preview_update_by_id(root, &packet_id)?
         }
         "brainmap_apply_update" => {
             if args.get("approved").and_then(Value::as_bool) != Some(true) {
@@ -271,7 +271,7 @@ fn call_tool(root: &Path, name: &str, args: Value) -> Result<Value> {
                 }
             })
         }
-        "brainmap_autopilot_status" => learning::autopilot_status_value(root),
+        "brainmap_autopilot_status" => learning::autopilot_status_value(root)?,
         _ => unreachable!(),
     };
     Ok(json!({"content":[{"type":"text","text":serde_json::to_string_pretty(&value)?}]}))

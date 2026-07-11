@@ -7,9 +7,13 @@ pub struct DecisionResult {
     #[serde(rename = "decisionId")]
     pub decision_id: String,
     pub outcome: String,
+    #[serde(rename = "predictedOutcome")]
+    pub predicted_outcome: String,
     pub recommendation: String,
     #[serde(rename = "selectedOption")]
     pub selected_option: Option<String>,
+    #[serde(rename = "predictedSelectedOption")]
+    pub predicted_selected_option: Option<String>,
     #[serde(rename = "rejectedOptions")]
     pub rejected_options: Vec<String>,
     pub confidence: f64,
@@ -39,6 +43,12 @@ pub struct DecisionResult {
     pub ask_user_question: Option<String>,
     #[serde(rename = "defaultIfNoAnswer")]
     pub default_if_no_answer: Option<String>,
+    #[serde(rename = "gateMode")]
+    pub gate_mode: String,
+    #[serde(rename = "autopilotMode")]
+    pub autopilot_mode: String,
+    #[serde(rename = "dogfoodRunId", skip_serializing_if = "Option::is_none")]
+    pub dogfood_run_id: Option<String>,
     #[serde(rename = "learningEvent")]
     pub learning_event: serde_json::Value,
 }

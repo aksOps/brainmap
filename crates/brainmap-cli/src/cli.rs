@@ -1,6 +1,6 @@
 use crate::{
-    bench, context, eval, export, gate, harness, index, install, learning, mcp, model, onboarding,
-    skill, snapshot, util, vault, web,
+    bench, build_info, context, dogfood, eval, export, gate, harness, index, install, learning,
+    mcp, model, onboarding, qualification, skill, snapshot, util, vault, web,
 };
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -21,11 +21,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    #[command(name = "build-info")]
+    BuildInfo,
     Init(InitArgs),
     #[command(name = "init-vault")]
     InitVault(InitVaultArgs),
     Status(VaultArg),
     Doctor(VaultArg),
+    Dogfood(DogfoodArgs),
+    Qualification(QualificationArgs),
     #[command(name = "build-decision-engine")]
     BuildDecisionEngine(BuildArgs),
     #[command(name = "build-brain")]
@@ -100,6 +104,83 @@ struct InitVaultArgs {
     yes: bool,
 }
 
+#[derive(Args)]
+struct DogfoodArgs {
+    #[command(subcommand)]
+    command: DogfoodCommand,
+}
+
+#[derive(Subcommand)]
+enum DogfoodCommand {
+    Start(DogfoodStartArgs),
+    Status(VaultArg),
+    Review(DogfoodReviewArgs),
+    Abort(DogfoodAbortArgs),
+    Finalize(DogfoodFinalizeArgs),
+}
+
+#[derive(Args)]
+struct QualificationArgs {
+    #[command(subcommand)]
+    command: QualificationCommand,
+}
+
+#[derive(Subcommand)]
+enum QualificationCommand {
+    Verify(QualificationVerifyArgs),
+}
+
+#[derive(Args)]
+struct QualificationVerifyArgs {
+    #[arg(long)]
+    bundle: PathBuf,
+}
+
+#[derive(Args)]
+pub(crate) struct DogfoodStartArgs {
+    #[arg(long)]
+    pub(crate) candidate_commit: String,
+    #[arg(long)]
+    pub(crate) adapter: String,
+    #[arg(long)]
+    pub(crate) started_at: String,
+    #[arg(long)]
+    pub(crate) qualification_bundle: PathBuf,
+    #[arg(long)]
+    pub(crate) vault: Option<PathBuf>,
+}
+
+#[derive(Args)]
+pub(crate) struct DogfoodAbortArgs {
+    #[arg(long)]
+    pub(crate) reason: String,
+    #[arg(long)]
+    pub(crate) vault: Option<PathBuf>,
+}
+
+#[derive(Args)]
+pub(crate) struct DogfoodReviewArgs {
+    #[arg(
+        long,
+        value_parser = ["clear", "investigating", "resolved-no-violation", "candidate-failed"]
+    )]
+    pub(crate) incident_status: String,
+    #[arg(long)]
+    pub(crate) vault: Option<PathBuf>,
+}
+
+#[derive(Args)]
+pub(crate) struct DogfoodFinalizeArgs {
+    #[arg(long)]
+    pub(crate) out: PathBuf,
+    #[arg(long)]
+    pub(crate) signer: String,
+    #[arg(long)]
+    pub(crate) incident_disposition: String,
+    #[arg(long)]
+    pub(crate) vault: Option<PathBuf>,
+}
+
 #[derive(Args, Clone)]
 pub struct BuildArgs {
     #[arg(long, default_value = "auto")]
@@ -141,6 +222,8 @@ enum IntegrationCommand {
 pub struct IntegrationDoctorArgs {
     #[arg(long)]
     pub target: String,
+    #[arg(long, conflicts_with = "project")]
+    pub global: bool,
     #[arg(long)]
     pub project: Option<PathBuf>,
     #[arg(long)]
@@ -246,14 +329,16 @@ pub struct LearnFeedbackArgs {
 #[serde(rename_all = "kebab-case")]
 pub enum FeedbackIncident {
     FalseProceed,
+    ConfirmedCollision,
     CrossDomainApplication,
     PrivacyViolation,
     HardRuleViolation,
 }
 
 impl FeedbackIncident {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::FalseProceed,
+        Self::ConfirmedCollision,
         Self::CrossDomainApplication,
         Self::PrivacyViolation,
         Self::HardRuleViolation,
@@ -262,6 +347,7 @@ impl FeedbackIncident {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::FalseProceed => "false-proceed",
+            Self::ConfirmedCollision => "confirmed-collision",
             Self::CrossDomainApplication => "cross-domain-application",
             Self::PrivacyViolation => "privacy-violation",
             Self::HardRuleViolation => "hard-rule-violation",
@@ -628,6 +714,8 @@ struct InstallArgs {
 #[derive(Subcommand)]
 enum InstallCommand {
     Harness(install::InstallHarnessArgs),
+    /// Install the exact qualified brainmap/brainmapd candidate pair locally.
+    Candidate(install::InstallCandidateArgs),
 }
 
 #[derive(Args)]
@@ -682,10 +770,21 @@ pub fn run() -> Result<()> {
     let args: Vec<OsString> = util::strip_optional_program_alias(std::env::args_os().collect());
     let cli = Cli::parse_from(args);
     match cli.command {
+        Command::BuildInfo => build_info::print_build_info(),
         Command::Init(args) => vault::init_config(args.dry_run),
         Command::InitVault(args) => vault::init_vault(args.vault, args.dry_run, args.yes),
         Command::Status(args) => vault::status(args.vault),
         Command::Doctor(args) => vault::doctor(args.vault),
+        Command::Dogfood(args) => match args.command {
+            DogfoodCommand::Start(args) => dogfood::start(args),
+            DogfoodCommand::Status(args) => dogfood::status(args.vault),
+            DogfoodCommand::Review(args) => dogfood::review(args),
+            DogfoodCommand::Abort(args) => dogfood::abort(args),
+            DogfoodCommand::Finalize(args) => dogfood::finalize(args),
+        },
+        Command::Qualification(args) => match args.command {
+            QualificationCommand::Verify(args) => qualification::verify_cmd(&args.bundle),
+        },
         Command::BuildDecisionEngine(args) | Command::BuildBrain(args) => {
             learning::build_decision_engine(args)
         }
@@ -700,9 +799,7 @@ pub fn run() -> Result<()> {
         Command::Calibrate(args) => learning::calibrate(args),
         Command::Autopilot(args) => match args.command {
             AutopilotCommand::Status(v) => learning::autopilot_status(v.vault),
-            AutopilotCommand::Enable { level, vault } => {
-                learning::autopilot_set(vault, "shadow", &level, None)
-            }
+            AutopilotCommand::Enable { level, vault } => learning::autopilot_promote(vault, &level),
             AutopilotCommand::Disable(v) => {
                 learning::autopilot_set(v.vault, "disabled", "off", None)
             }
@@ -769,6 +866,7 @@ pub fn run() -> Result<()> {
         },
         Command::Install(args) => match args.command {
             InstallCommand::Harness(args) => install::install_harness(args),
+            InstallCommand::Candidate(args) => install::install_candidate(args),
         },
         Command::Integration(args) => match args.command {
             IntegrationCommand::Doctor(args) => install::integration_doctor(args),
