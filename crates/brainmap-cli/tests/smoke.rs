@@ -937,7 +937,10 @@ fn codex_global_install_uses_codex_home_and_pins_the_running_binary() {
         .collect::<Vec<_>>();
     assert!(!hook_commands.is_empty());
     assert!(hook_commands.iter().all(|command| {
-        command.contains(env!("CARGO_BIN_EXE_brainmap")) && !command.starts_with("brainmap ")
+        command.contains(env!("CARGO_BIN_EXE_brainmap"))
+            && command.contains(" harness hook --vault ")
+            && command.contains(path(&root))
+            && !command.starts_with("brainmap ")
     }));
 
     let mut stale_hooks = hooks;

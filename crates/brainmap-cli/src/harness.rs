@@ -168,7 +168,7 @@ fn hook_gate_input(host: &str, event: &str, payload: &str) -> gate::GateInput {
         decision_type: "agent-harness".into(),
         scope: crate::util::default_project_scope(),
         agent_confidence: Some(0.86),
-        dry_run: true,
+        dry_run: false,
     }
 }
 
@@ -332,6 +332,10 @@ mod tests {
         );
         assert!(prompt.proposed_action.contains("npm or pnpm"));
         assert_eq!(prompt.intent, "agent-hook:UserPromptSubmit");
+        assert!(
+            !prompt.dry_run,
+            "host hook execution must be recorded for audit and qualification"
+        );
     }
 
     #[test]
@@ -355,6 +359,13 @@ mod tests {
         .unwrap();
         assert_eq!(routine.outcome, "proceed");
         assert_eq!(routine.selected_option.as_deref(), Some("proceed"));
+        let ledger = std::fs::read_to_string(root.join("90-calibration/decision-ledger.jsonl"))
+            .expect("read hook audit ledger");
+        let event: serde_json::Value =
+            serde_json::from_str(ledger.lines().last().expect("hook audit event"))
+                .expect("parse hook audit event");
+        assert_eq!(event["intent"], "agent-hook:PreToolUse");
+        assert_eq!(event["decisionType"], "agent-harness");
 
         let destructive = gate::evaluate(
             &root,
