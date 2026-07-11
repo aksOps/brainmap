@@ -85,7 +85,7 @@ pub fn hook(args: HookArgs) -> Result<()> {
     let root = vault::resolve_vault(args.vault);
     let response = gate::evaluate(&root, hook_gate_input(&args.host, &args.event, &payload))?;
 
-    if hook_should_block(&args.event, &response.outcome) {
+    if hook_should_block(&args.event, &response) {
         let label = if response.outcome == "block" {
             "Action rejected"
         } else {
@@ -172,7 +172,19 @@ fn hook_gate_input(host: &str, event: &str, payload: &str) -> gate::GateInput {
     }
 }
 
-fn hook_should_block(event: &str, outcome: &str) -> bool {
+fn hook_should_block(event: &str, response: &gate::GateResponse) -> bool {
+    let shadow_prediction_is_routine = is_pre_tool(event)
+        && (response.gate_mode == "shadow" || response.autopilot_mode == "shadow")
+        && response.predicted_outcome == "proceed";
+    let outcome = if shadow_prediction_is_routine {
+        &response.predicted_outcome
+    } else {
+        &response.outcome
+    };
+    hook_outcome_should_block(event, outcome)
+}
+
+fn hook_outcome_should_block(event: &str, outcome: &str) -> bool {
     outcome == "block" || (is_pre_tool(event) && outcome == "ask_user")
 }
 
@@ -354,15 +366,53 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(destructive.outcome.as_str(), "ask_user" | "block"));
-        assert!(hook_should_block("PreToolUse", &destructive.outcome));
+        assert!(hook_should_block("PreToolUse", &destructive));
+    }
+
+    #[test]
+    fn shadow_pre_tool_hook_observes_routine_actions_without_self_deadlock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        crate::vault::init_vault(Some(root.clone()), false, true).unwrap();
+        crate::index::rebuild(&root).unwrap();
+
+        let routine = gate::evaluate(
+            &root,
+            hook_gate_input(
+                "codex",
+                "PreToolUse",
+                r#"{"tool_name":"Bash","tool_input":{"command":"brainmap skill build-decision-engine --host codex"}}"#,
+            ),
+        )
+        .unwrap();
+        assert_eq!(routine.gate_mode, "shadow");
+        assert_eq!(routine.autopilot_mode, "shadow");
+        assert_eq!(routine.predicted_outcome, "proceed");
+        assert_eq!(routine.outcome, "ask_user");
+        assert!(!hook_should_block("PreToolUse", &routine));
+
+        let destructive = gate::evaluate(
+            &root,
+            hook_gate_input(
+                "codex",
+                "PreToolUse",
+                r#"{"tool_name":"Bash","tool_input":{"command":"rm -rf target"}}"#,
+            ),
+        )
+        .unwrap();
+        assert!(matches!(
+            destructive.predicted_outcome.as_str(),
+            "ask_user" | "block"
+        ));
+        assert!(hook_should_block("PreToolUse", &destructive));
     }
 
     #[test]
     fn hook_blocks_pre_tool_approval_but_not_prompt_advice() {
-        assert!(hook_should_block("PreToolUse", "ask_user"));
-        assert!(hook_should_block("UserPromptSubmit", "block"));
-        assert!(!hook_should_block("UserPromptSubmit", "ask_user"));
-        assert!(!hook_should_block("PreToolUse", "proceed"));
+        assert!(hook_outcome_should_block("PreToolUse", "ask_user"));
+        assert!(hook_outcome_should_block("UserPromptSubmit", "block"));
+        assert!(!hook_outcome_should_block("UserPromptSubmit", "ask_user"));
+        assert!(!hook_outcome_should_block("PreToolUse", "proceed"));
     }
 
     #[test]
