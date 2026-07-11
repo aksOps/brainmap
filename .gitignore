@@ -9,3 +9,10 @@
 /npm/brainmap/bin/brainmap
 /npm/brainmap/bin/brainmapd
 /assets/models/*.tar.zst
+
+# Private planning, design, and discussion material.
+# These files remain available locally but are intentionally excluded from pushes.
+/design.md
+/frontend.md
+/M001-*.md
+/docs/
