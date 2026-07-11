@@ -1077,12 +1077,14 @@ validate_launch_marker() {
 }
 
 query_trusted_hooks() {
-  local state="$1" codex project brainmap expected_prompt expected_tool params hooks
+  local state="$1" codex project brainmap vault quoted_vault expected_prompt expected_tool params hooks
   codex="$(state_value "${state}" '.paths.codex')"
   project="$(state_value "${state}" '.paths.project')"
   brainmap="$(state_value "${state}" '.paths.brainmap')"
-  expected_prompt="'${brainmap}' harness hook --host codex --event UserPromptSubmit"
-  expected_tool="'${brainmap}' harness hook --host codex --event PreToolUse"
+  vault="$(state_value "${state}" '.paths.vault')"
+  quoted_vault="'${vault//\'/\'\"\'\"\'}'"
+  expected_prompt="'${brainmap}' harness hook --vault ${quoted_vault} --host codex --event UserPromptSubmit"
+  expected_tool="'${brainmap}' harness hook --vault ${quoted_vault} --host codex --event PreToolUse"
   params="$(jq -nc --arg project "${project}" '{cwds:[$project]}')"
   codex_rpc "${codex}" hooks/list "${params}" "$(state_value "${state}" '.paths.codexHome')"
   hooks="${RPC_RESULT}"
@@ -1102,7 +1104,7 @@ query_trusted_hooks() {
       | select(($brainmapHooks | length) == 2)
       | select(([
           $entry.hooks[]
-          | select(((.command // "") | contains(" harness hook --host codex --event ")))
+          | select(((.command // "") | contains(" harness hook --vault ")))
         ] | length) == 2)
       | select(all($brainmapHooks[];
           .enabled == true

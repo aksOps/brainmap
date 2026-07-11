@@ -141,8 +141,8 @@ approval_mode = "prompt"
 # END BRAINMAP MANAGED BLOCK
 EOF
     jq -n \
-      --arg prompt "'${self}' harness hook --host codex --event UserPromptSubmit" \
-      --arg tool "'${self}' harness hook --host codex --event PreToolUse" '{
+      --arg prompt "'${self}' harness hook --vault '${vault}' --host codex --event UserPromptSubmit" \
+      --arg tool "'${self}' harness hook --vault '${vault}' --host codex --event PreToolUse" '{
       hooks: {
         UserPromptSubmit: [{hooks:[{type:"command",command:$prompt,timeout:10}]}],
         PreToolUse: [{
@@ -269,8 +269,8 @@ if [[ "$#" -eq 10 && "$9" == app-server && "${10}" == --stdio ]]; then
         jq -nc \
           --argjson id "${id}" \
           --arg project "${project}" \
-          --arg prompt "'${brainmap}' harness hook --host codex --event UserPromptSubmit" \
-          --arg tool "'${brainmap}' harness hook --host codex --event PreToolUse" \
+          --arg prompt "'${brainmap}' harness hook --vault '${vault}' --host codex --event UserPromptSubmit" \
+          --arg tool "'${brainmap}' harness hook --vault '${vault}' --host codex --event PreToolUse" \
           --arg trust "${trust}" \
           --arg promptHash "${prompt_hash}" \
           --arg toolHash "${tool_hash}" \

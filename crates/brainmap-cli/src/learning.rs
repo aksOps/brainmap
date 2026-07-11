@@ -1557,6 +1557,13 @@ fn shadow_metrics_from_bytes(
         }
         match kind {
             Some("decision-gate") => {
+                if event
+                    .get("decisionType")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("agent-harness")
+                {
+                    continue;
+                }
                 if gates.contains_key(id) {
                     metrics.duplicate_gate_ids += 1;
                     continue;
@@ -2720,6 +2727,55 @@ mod tests {
         assert_eq!(metrics["decisions"], 1);
         assert_eq!(metrics["fuzzyMatches"], 1);
         assert_eq!(metrics["agreements"], 1);
+    }
+
+    #[test]
+    fn active_run_metrics_exclude_host_hook_observations_from_decision_pairs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("BrainMap");
+        vault::init_vault(Some(root.clone()), false, true).unwrap();
+        let started_at = activate_test_dogfood_run(&root, "dogfood_current");
+        let ledger = root.join("90-calibration/decision-ledger.jsonl");
+        for event in [
+            json!({
+                "id": "host-hook-gate",
+                "kind": "decision-gate",
+                "decisionType": "agent-harness",
+                "dogfoodRunId": "dogfood_current",
+                "createdAt": test_timestamp(started_at, 1),
+                "outcome": "no_action",
+                "predictedOutcome": "no_action"
+            }),
+            json!({
+                "id": "developer-gate",
+                "kind": "decision-gate",
+                "decisionType": "tooling",
+                "dogfoodRunId": "dogfood_current",
+                "createdAt": test_timestamp(started_at, 2),
+                "outcome": "ask_user",
+                "predictedOutcome": "proceed",
+                "predictedSelectedOption": "biome"
+            }),
+            json!({
+                "id": "developer-action",
+                "decisionId": "developer-gate",
+                "kind": "record-decision",
+                "dogfoodRunId": "dogfood_current",
+                "createdAt": test_timestamp(started_at, 3),
+                "chosen": "biome",
+                "wasAsked": true
+            }),
+        ] {
+            util::append_jsonl(&ledger, &event).unwrap();
+        }
+
+        let status = autopilot_status_value(&root).unwrap();
+        let metrics = &status["shadowMetrics"];
+
+        assert_eq!(metrics["decisions"], 1);
+        assert_eq!(metrics["actionRecords"], 1);
+        assert_eq!(metrics["completeGateActionPairs"], 1);
+        assert_eq!(metrics["missingActionRecords"], 0);
     }
 
     #[test]

@@ -921,7 +921,7 @@ struct HookBinding {
     event: &'static str,
     matcher: Option<&'static str>,
     command: String,
-    managed_suffix: String,
+    managed_suffixes: Vec<String>,
     managed_commands: Vec<String>,
     timeout_secs: u64,
 }
@@ -1223,6 +1223,7 @@ fn plan(args: &InstallHarnessArgs) -> Result<Vec<PlanItem>> {
                 action: PlanAction::JsonHooks(codex_hook_bindings(
                     "codex",
                     &executable,
+                    &vault,
                     previous_command.as_deref(),
                 )),
             },
@@ -1262,6 +1263,7 @@ fn hook_bindings(host: &str) -> Vec<HookBinding> {
 fn codex_hook_bindings(
     host: &str,
     executable: &std::path::Path,
+    vault: &std::path::Path,
     previous_command: Option<&str>,
 ) -> Vec<HookBinding> {
     let mut additional = vec!["brainmap".to_string()];
@@ -1273,11 +1275,28 @@ fn codex_hook_bindings(
         };
         additional.push(previous);
     }
-    hook_bindings_with_commands(
+    let mut bindings = hook_bindings_with_commands(
         host,
         &shell_quote(executable.to_string_lossy().as_ref()),
         &additional,
-    )
+    );
+    for binding in &mut bindings {
+        let legacy_command = binding.command.clone();
+        binding.command = brainmap_hook_command_with_vault(
+            &shell_quote(executable.to_string_lossy().as_ref()),
+            vault,
+            host,
+            binding.event,
+        );
+        binding.managed_commands.push(legacy_command);
+        binding.managed_commands.push(binding.command.clone());
+        binding.managed_commands.sort();
+        binding.managed_commands.dedup();
+        binding
+            .managed_suffixes
+            .push(brainmap_hook_suffix_with_vault(vault, host, binding.event));
+    }
+    bindings
 }
 
 fn hook_bindings_with_commands(
@@ -1304,7 +1323,7 @@ fn hook_bindings_with_commands(
             event,
             matcher,
             command: current,
-            managed_suffix: brainmap_hook_suffix(host, event),
+            managed_suffixes: vec![brainmap_hook_suffix(host, event)],
             managed_commands,
             timeout_secs: 10,
         }
@@ -1331,6 +1350,25 @@ fn managed_codex_mcp_command(path: &std::path::Path) -> Option<String> {
 
 fn brainmap_hook_command(command: &str, host: &str, event: &str) -> String {
     format!("{command} harness hook --host {host} --event {event}")
+}
+
+fn brainmap_hook_command_with_vault(
+    command: &str,
+    vault: &std::path::Path,
+    host: &str,
+    event: &str,
+) -> String {
+    format!(
+        "{command}{}",
+        brainmap_hook_suffix_with_vault(vault, host, event)
+    )
+}
+
+fn brainmap_hook_suffix_with_vault(vault: &std::path::Path, host: &str, event: &str) -> String {
+    format!(
+        " harness hook --vault {} --host {host} --event {event}",
+        shell_quote(vault.to_string_lossy().as_ref())
+    )
 }
 
 fn brainmap_hook_suffix(host: &str, event: &str) -> String {
@@ -1673,7 +1711,12 @@ fn hook_bindings_installed(root: &Value, bindings: &[HookBinding]) -> bool {
                     .flatten()
             })
             .filter_map(|command| command.get("command").and_then(Value::as_str))
-            .filter(|command| command.ends_with(&binding.managed_suffix))
+            .filter(|command| {
+                binding
+                    .managed_suffixes
+                    .iter()
+                    .any(|suffix| command.ends_with(suffix))
+            })
             .collect::<Vec<_>>();
         matching.len() == 1
             && matching[0] == binding.command
