@@ -223,6 +223,15 @@ set -euo pipefail
 if [[ "${1:-}" == "--version" ]]; then
   echo 'cargo 1.95.0 (fixture)'
 fi
+if [[ "${1:-}" == "build" ]]; then
+  [[ "${BRAINMAP_INTERNAL_QUALIFICATION_MARKER:-}" == \
+    brainmap-clean-locked-two-root-v1 ]]
+  [[ "${BRAINMAP_INTERNAL_CANDIDATE_COMMIT:-}" == \
+    "$(git rev-parse HEAD)" ]]
+  [[ "${BRAINMAP_INTERNAL_SOURCE_CLEAN:-}" == true ]]
+  [[ "${BRAINMAP_INTERNAL_LOCKED:-}" == true ]]
+  [[ "${BRAINMAP_INTERNAL_TWO_ROOT_CANDIDATE:-}" == true ]]
+fi
 exit 0
 EOF
 cat >"${fake_bin}/rustc" <<'EOF'
