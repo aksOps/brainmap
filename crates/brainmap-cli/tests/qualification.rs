@@ -15,6 +15,36 @@ fn qualification_verify_rejects_a_semantic_bundle_for_a_nonqualifying_debug_bina
 }
 
 #[test]
+fn qualification_verify_accepts_runner_precheck_commands() {
+    let fixture = ValidBundle::new();
+    fixture.mutate_json("runner/commands.json", |commands| {
+        let commands = commands.as_array_mut().expect("commands array");
+        for command in commands.iter_mut() {
+            command["sequence"] =
+                serde_json::json!(command["sequence"].as_u64().expect("command sequence") + 1);
+        }
+        commands.insert(
+            0,
+            serde_json::json!({
+                "sequence": 1,
+                "fia": "PRECHECK",
+                "id": "brainmap-version",
+                "command": "<brainmap> --version",
+                "expectedExit": 0,
+                "exitCode": 0,
+                "passed": true
+            }),
+        );
+    });
+    fixture.refresh_checksums();
+
+    fails(
+        &["qualification", "verify", "--bundle", path(&fixture.bundle)],
+        "candidate binary was not built by the clean locked two-root qualification workflow",
+    );
+}
+
+#[test]
 fn qualification_verify_requires_the_exact_companion_brainmapd() {
     let fixture = ValidBundle::new_for(
         COMMIT,
