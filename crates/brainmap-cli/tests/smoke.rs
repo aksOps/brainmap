@@ -1442,6 +1442,8 @@ fn concurrent_processes_preserve_ledgers_ids_capture_and_feedback() {
                     "--vault",
                     path(&root),
                 ])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
                 .spawn()
                 .expect("spawn concurrent gate"),
         );
@@ -1454,6 +1456,8 @@ fn concurrent_processes_preserve_ledgers_ids_capture_and_feedback() {
                     "--vault",
                     path(&root),
                 ])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
                 .spawn()
                 .expect("spawn concurrent recording"),
         );
