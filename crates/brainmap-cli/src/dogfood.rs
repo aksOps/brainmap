@@ -1546,8 +1546,10 @@ fn start_at_with_verifier(
         Ok(run) => run,
         Err(error) => {
             if fault.is_some() {
+                drop(ledger_lock);
                 return Err(error);
             }
+            drop(ledger_lock);
             return match reconcile_pending_transaction_locked(&root) {
                 Ok(ReconcileOutcome::StartActivated) => {
                     let run = load_state(&root)?
@@ -1565,6 +1567,7 @@ fn start_at_with_verifier(
             };
         }
     };
+    drop(ledger_lock);
     println!("dogfood run {} started in shadow mode", run.run_id);
     Ok(())
 }

@@ -47,7 +47,7 @@ pub fn rebuild(root: &Path) -> Result<()> {
     let notes = vault::load_notes(root)?;
     let mut link_index = HashMap::new();
     for note in &notes {
-        let path = note.path.to_string_lossy().to_string();
+        let path = note.path.to_string_lossy().replace('\\', "/");
         link_index.insert(note.id.clone(), note.id.clone());
         link_index.insert(path.clone(), note.id.clone());
         if let Some(path_without_ext) = path.strip_suffix(".md") {
@@ -60,11 +60,12 @@ pub fn rebuild(root: &Path) -> Result<()> {
         let tx = conn.transaction()?;
         let mut executable_ids = HashMap::<String, (String, bool)>::new();
         for note in &notes {
+            let path = note.path.to_string_lossy().replace('\\', "/");
             tx.execute(
                 "insert into notes (id,path,title,note_type,status,confidence,risk_tier,sensitivity,body) values (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
                 params![
                     note.id,
-                    note.path.to_string_lossy(),
+                    path.as_str(),
                     note.title,
                     note.note_type,
                     note.status,
@@ -76,16 +77,11 @@ pub fn rebuild(root: &Path) -> Result<()> {
             )?;
             tx.execute(
                 "insert into fts_notes (path,title,body) values (?1,?2,?3)",
-                params![note.path.to_string_lossy(), note.title, note.body],
+                params![path.as_str(), note.title, note.body],
             )?;
             tx.execute(
                 "insert into graph_nodes (id,path,kind,title) values (?1,?2,?3,?4)",
-                params![
-                    note.id,
-                    note.path.to_string_lossy(),
-                    note.note_type,
-                    note.title
-                ],
+                params![note.id, path.as_str(), note.note_type, note.title],
             )?;
             let compiled_rule = match markdown::parse_decision_rule_result(&note.body) {
                 Ok(rule) => rule,
@@ -104,7 +100,7 @@ pub fn rebuild(root: &Path) -> Result<()> {
                 }
             };
             if let Some(rule) = compiled_rule {
-                let rule_path = note.path.to_string_lossy().to_string();
+                let rule_path = path.clone();
                 let situation_normalized = normalize_decision_text(&rule.situation);
                 let chosen_normalized = normalize_decision_text(&rule.chosen);
                 let decision_type = rule

@@ -369,7 +369,12 @@ fn haystack(note: &Note) -> String {
 }
 
 fn wikilink(note: &Note) -> String {
-    format!("[[{}]]", note.path.with_extension("").display())
+    let path = note
+        .path
+        .with_extension("")
+        .to_string_lossy()
+        .replace('\\', "/");
+    format!("[[{path}]]")
 }
 
 fn badge(note: &Note) -> String {
