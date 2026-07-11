@@ -153,7 +153,10 @@ pub fn sync_directory(path: &Path) -> Result<()> {
 }
 
 pub fn sync_file(path: &Path) -> Result<()> {
-    File::open(path)
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
         .with_context(|| format!("open {} for sync", path.display()))?
         .sync_all()
         .with_context(|| format!("sync {}", path.display()))
@@ -652,7 +655,11 @@ mod tests {
         }
         assert!(ready.exists(), "child did not acquire the process lock");
         let active_error = FileLock::acquire(tmp.path(), "process.lock").unwrap_err();
-        assert!(active_error.to_string().contains("pid="));
+        let active_error = active_error.to_string();
+        #[cfg(not(windows))]
+        assert!(active_error.contains("pid="));
+        #[cfg(windows)]
+        assert!(active_error.contains("lock already held"));
 
         child.kill().unwrap();
         child.wait().unwrap();

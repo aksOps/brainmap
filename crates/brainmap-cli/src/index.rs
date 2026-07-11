@@ -233,9 +233,7 @@ pub fn rebuild(root: &Path) -> Result<()> {
         )?;
         tx.commit()?;
     }
-    let tmp_file = fs::File::open(&tmp)?;
-    tmp_file.sync_all()?;
-    drop(tmp_file);
+    util::sync_file(&tmp)?;
     util::replace_file_atomic(&tmp, &final_path)?;
     #[cfg(unix)]
     fs::File::open(root.join(".brainmap"))?.sync_all()?;
