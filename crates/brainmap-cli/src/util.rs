@@ -7,9 +7,13 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(windows)]
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+#[cfg(windows)]
+static WINDOWS_ATOMIC_WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 pub fn now_iso() -> String {
     let now: DateTime<Utc> = Utc::now();
@@ -112,6 +116,11 @@ pub fn ensure_parent(path: &Path) -> Result<()> {
 }
 
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    #[cfg(windows)]
+    let _windows_atomic_write_guard = WINDOWS_ATOMIC_WRITE_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("Windows atomic-write lock poisoned");
     ensure_parent(path)?;
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let file_name = path
@@ -134,9 +143,26 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         Ok(())
     })();
     if result.is_err() {
-        let _ = fs::remove_file(&tmp);
+        remove_file_with_retry(&tmp);
     }
     result
+}
+
+fn remove_file_with_retry(path: &Path) {
+    for attempt in 0..50 {
+        match fs::remove_file(path) {
+            Ok(()) => return,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) if retryable_windows_io_error(&error) && attempt < 49 => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(_) => return,
+        }
+    }
+}
+
+fn retryable_windows_io_error(error: &std::io::Error) -> bool {
+    cfg!(windows) && matches!(error.raw_os_error(), Some(5 | 32 | 33))
 }
 
 pub fn sync_directory(path: &Path) -> Result<()> {
@@ -255,6 +281,9 @@ impl LockedJsonl {
         let mut bytes = serde_json::to_vec(value)?;
         bytes.push(b'\n');
         self.file
+            .seek(SeekFrom::End(0))
+            .with_context(|| format!("seek {}", self.path.display()))?;
+        self.file
             .write_all(&bytes)
             .with_context(|| format!("append {}", self.path.display()))?;
         self.file
@@ -285,10 +314,21 @@ pub fn lock_jsonl(path: &Path) -> Result<LockedJsonl> {
     let file = OpenOptions::new()
         .create(true)
         .read(true)
-        .append(true)
+        .write(true)
+        .truncate(false)
         .open(path)
         .with_context(|| format!("append {}", path.display()))?;
-    FileExt::lock(&file).with_context(|| format!("lock {}", path.display()))?;
+    for attempt in 0..50 {
+        match FileExt::lock(&file) {
+            Ok(()) => break,
+            Err(error) if retryable_windows_io_error(&error) && attempt < 49 => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(error) => {
+                return Err(error).with_context(|| format!("lock {}", path.display()));
+            }
+        }
+    }
     Ok(LockedJsonl {
         file,
         path: path.to_path_buf(),
