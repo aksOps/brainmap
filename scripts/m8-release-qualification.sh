@@ -397,7 +397,17 @@ run_sbom_gate() {
 }
 
 run_locked_release_build() {
-  cargo build --release --locked -p brainmap-cli --bin brainmap --bin brainmapd
+  env \
+    RUSTC_WRAPPER= \
+    RUSTC_WORKSPACE_WRAPPER= \
+    CARGO_BUILD_RUSTC_WRAPPER= \
+    CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER= \
+    BRAINMAP_INTERNAL_QUALIFICATION_MARKER=brainmap-clean-locked-two-root-v1 \
+    BRAINMAP_INTERNAL_CANDIDATE_COMMIT="${candidate_commit}" \
+    BRAINMAP_INTERNAL_SOURCE_CLEAN=true \
+    BRAINMAP_INTERNAL_LOCKED=true \
+    BRAINMAP_INTERNAL_TWO_ROOT_CANDIDATE=true \
+    cargo build --release --locked -p brainmap-cli --bin brainmap --bin brainmapd
   verify_release_binary_identity
 }
 
