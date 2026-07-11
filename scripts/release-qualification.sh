@@ -161,7 +161,14 @@ archive="${temporary}/release.brainmap.tar.zst"
   --decision-type tooling \
   --scope project:release-qualification \
   --vault "${source_vault}" >"${temporary}/learned-before-correction.json"
-jq -e '.outcome == "proceed" and .selectedOption == "cargo nextest"' \
+jq -e '
+  .outcome == "ask_user"
+  and .selectedOption == null
+  and .predictedOutcome == "proceed"
+  and .predictedSelectedOption == "cargo nextest"
+  and .gateMode == "shadow"
+  and .autopilotMode == "shadow"
+' \
   "${temporary}/learned-before-correction.json" >/dev/null
 decision_id="$(jq -r '.decisionId' "${temporary}/learned-before-correction.json")"
 "${brainmap}" learn-feedback \
@@ -179,7 +186,14 @@ decision_id="$(jq -r '.decisionId' "${temporary}/learned-before-correction.json"
   --decision-type tooling \
   --scope project:release-qualification \
   --vault "${source_vault}" >"${evidence}/source-corrected-gate.json"
-jq -e '.outcome == "proceed" and .selectedOption == "cargo test"' \
+jq -e '
+  .outcome == "ask_user"
+  and .selectedOption == null
+  and .predictedOutcome == "proceed"
+  and .predictedSelectedOption == "cargo test"
+  and .gateMode == "shadow"
+  and .autopilotMode == "shadow"
+' \
   "${evidence}/source-corrected-gate.json" >/dev/null
 "${brainmap}" gate --json --dry-run \
   --situation "Choose formatter for release qualification" \
@@ -189,7 +203,14 @@ jq -e '.outcome == "proceed" and .selectedOption == "cargo test"' \
   --decision-type tooling \
   --scope project:release-qualification \
   --vault "${source_vault}" >"${evidence}/source-learned-gate.json"
-jq -e '.outcome == "proceed" and .selectedOption == "biome"' \
+jq -e '
+  .outcome == "ask_user"
+  and .selectedOption == null
+  and .predictedOutcome == "proceed"
+  and .predictedSelectedOption == "biome"
+  and .gateMode == "shadow"
+  and .autopilotMode == "shadow"
+' \
   "${evidence}/source-learned-gate.json" >/dev/null
 "${brainmap}" gate --json --dry-run \
   --situation "Choose v1 storage" \
@@ -199,7 +220,14 @@ jq -e '.outcome == "proceed" and .selectedOption == "biome"' \
   --decision-type architecture \
   --scope global \
   --vault "${source_vault}" >"${evidence}/source-policy-gate.json"
-jq -e '.outcome == "proceed" and .selectedOption == "Markdown+JSONL"' \
+jq -e '
+  .outcome == "ask_user"
+  and .selectedOption == null
+  and .predictedOutcome == "proceed"
+  and .predictedSelectedOption == "Markdown+JSONL"
+  and .gateMode == "shadow"
+  and .autopilotMode == "shadow"
+' \
   "${evidence}/source-policy-gate.json" >/dev/null
 
 "${brainmap}" export --mode portable --vault "${source_vault}" --out "${archive}" >/dev/null
@@ -240,9 +268,9 @@ jq -e '.outcome == "proceed" and .selectedOption == "Markdown+JSONL"' \
   --vault "${restored_vault}" >"${evidence}/restored-policy-gate.json"
 
 for behavior in learned corrected policy; do
-  jq -S '{outcome, selectedOption, ruleId, ruleScope, matchKind, appliedPolicies, restrictionsApplied}' \
+  jq -S '{outcome, selectedOption, predictedOutcome, predictedSelectedOption, gateMode, autopilotMode, ruleId, ruleScope, matchKind, appliedPolicies, restrictionsApplied}' \
     "${evidence}/source-${behavior}-gate.json" >"${temporary}/source-${behavior}.normalized.json"
-  jq -S '{outcome, selectedOption, ruleId, ruleScope, matchKind, appliedPolicies, restrictionsApplied}' \
+  jq -S '{outcome, selectedOption, predictedOutcome, predictedSelectedOption, gateMode, autopilotMode, ruleId, ruleScope, matchKind, appliedPolicies, restrictionsApplied}' \
     "${evidence}/restored-${behavior}-gate.json" >"${temporary}/restored-${behavior}.normalized.json"
   cmp "${temporary}/source-${behavior}.normalized.json" \
     "${temporary}/restored-${behavior}.normalized.json"
@@ -316,8 +344,12 @@ for phase in \
     --scope project:restore-fault-qualification \
     --vault "${fault_target}" >"${evidence}/restore-fault-${phase}.json"
   jq -e '
-    .outcome == "proceed"
-    and (.selectedOption == "biome" or .selectedOption == "prettier")
+    .outcome == "ask_user"
+    and .selectedOption == null
+    and .predictedOutcome == "proceed"
+    and (.predictedSelectedOption == "biome" or .predictedSelectedOption == "prettier")
+    and .gateMode == "shadow"
+    and .autopilotMode == "shadow"
   ' "${evidence}/restore-fault-${phase}.json" >/dev/null
 done
 

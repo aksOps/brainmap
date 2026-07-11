@@ -198,13 +198,24 @@ jq -n '{
   indexRebuildMs: 500,
   candidateBounds: {retrieval: "actual-rule-term-postings"}
 }' >"${out}/bench-5000.json"
-jq -n '{
-  outcome: "proceed",
-  learningEvent: {
-    situation: "synthetic interface prompt",
-    options: ["one", "two"]
-  }
-}' >"${out}/source-learned-gate.json"
+emit_shadow_gate() {
+  local choice="$1" path="$2"
+  jq -n --arg choice "${choice}" '{
+    outcome: "ask_user",
+    selectedOption: null,
+    predictedOutcome: "proceed",
+    predictedSelectedOption: $choice,
+    gateMode: "shadow",
+    autopilotMode: "shadow",
+    learningEvent: {
+      situation: "synthetic interface prompt",
+      options: ["one", "two"]
+    }
+  }' >"${path}"
+}
+emit_shadow_gate "cargo test" "${out}/source-corrected-gate.json"
+emit_shadow_gate "biome" "${out}/source-learned-gate.json"
+emit_shadow_gate "Markdown+JSONL" "${out}/source-policy-gate.json"
 for phase in verified staging-created files-written index-rebuilt links-checked \
   gate-checked existing-backed-up staging-activated; do
   jq -n --arg phase "${phase}" \
