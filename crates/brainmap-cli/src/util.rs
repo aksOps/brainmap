@@ -275,7 +275,7 @@ pub struct LockedJsonl {
     file: File,
     path: PathBuf,
     #[cfg(windows)]
-    windows_mutex: WindowsJsonlMutex,
+    _windows_mutex: WindowsJsonlMutex,
 }
 
 impl LockedJsonl {
@@ -320,7 +320,6 @@ struct WindowsJsonlMutex {
 #[cfg(windows)]
 impl WindowsJsonlMutex {
     fn acquire(path: &Path) -> Result<Self> {
-        use std::os::windows::ffi::OsStrExt;
         use std::ptr::null;
         use windows_sys::Win32::Foundation::{
             CloseHandle, GetLastError, WAIT_ABANDONED, WAIT_FAILED, WAIT_OBJECT_0,
@@ -393,7 +392,7 @@ pub fn lock_jsonl(path: &Path) -> Result<LockedJsonl> {
         file,
         path: path.to_path_buf(),
         #[cfg(windows)]
-        windows_mutex,
+        _windows_mutex: windows_mutex,
     })
 }
 
